@@ -18,7 +18,6 @@ dependencies:
   # Camera & Media
   camera: ^0.10.6
   image_picker: ^1.1.0
-  image_cropper: ^6.0.0
   image: ^4.2.0
 
   # Networking & Real OCR
@@ -41,7 +40,6 @@ dependencies:
   # Export & Sharing
   share_plus: ^9.0.0
   pdf: ^3.10.8
-  printing: ^5.13.1
 
 dev_dependencies:
   flutter_test:
