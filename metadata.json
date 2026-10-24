@@ -1,0 +1,8 @@
+{
+  "name": "WriteScan AI — Handwriting to Text OCR",
+  "description": "Production-ready Android mobile and web handwriting OCR application that recognizes, edits, and exports handwritten notes in English, Hindi, and Indian/international languages with real AI vision transcription.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
