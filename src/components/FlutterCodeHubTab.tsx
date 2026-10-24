@@ -213,12 +213,13 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace "com.writescan.ai"
-    compileSdkVersion 34
+    compileSdk = 35
+    ndkVersion = "25.1.8937393"
 
     defaultConfig {
         applicationId "com.writescan.ai"
         minSdkVersion 23
-        targetSdkVersion 34
+        targetSdk = 35
         versionCode 1
         versionName "1.0"
         multiDexEnabled true

@@ -58,6 +58,8 @@ jobs:
           android.enableJetifier=true
           android.nonTransitiveRClass=true
           EOF
+          mkdir -p assets/sample_notes
+          touch assets/sample_notes/.gitkeep
 
       - name: Configure Keystore & Signing Properties
         working-directory: flutter_app
