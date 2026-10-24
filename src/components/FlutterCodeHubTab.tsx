@@ -379,6 +379,16 @@ class GeminiCloudOcrService implements OcrService {
   void dispose() => _client.close();
 }`,
   },
+  {
+    path: 'flutter_app/android/gradle.properties',
+    name: 'gradle.properties',
+    lang: 'properties',
+    description: 'Enables AndroidX, Jetifier, NonTransitiveRClass, and 4GB JVM memory for Gradle',
+    content: `org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=2G -XX:+HeapDumpOnOutOfMemoryError
+android.useAndroidX=true
+android.enableJetifier=true
+android.nonTransitiveRClass=true`,
+  },
 ];
 
 export const FlutterCodeHubTab: React.FC = () => {

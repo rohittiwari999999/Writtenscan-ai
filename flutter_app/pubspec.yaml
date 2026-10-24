@@ -42,7 +42,6 @@ dependencies:
   share_plus: ^9.0.0
   pdf: ^3.10.8
   printing: ^5.13.1
-  flutter_file_saver: ^0.3.0
 
 dev_dependencies:
   flutter_test:

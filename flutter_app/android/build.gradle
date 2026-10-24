@@ -11,6 +11,22 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+
+    // AGP 8 compatibility: automatically inject namespace if any legacy plugin omits it
+    afterEvaluate { project ->
+        if (project.hasProperty("android")) {
+            if (project.android.namespace == null) {
+                def manifestFile = project.file("src/main/AndroidManifest.xml")
+                if (manifestFile.exists()) {
+                    def manifestXml = new XmlParser(false, false).parse(manifestFile)
+                    def pkg = manifestXml.attributes()['package']
+                    if (pkg != null) {
+                        project.android.namespace = pkg
+                    }
+                }
+            }
+        }
+    }
 }
 
 tasks.register("clean", Delete) {
