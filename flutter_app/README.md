@@ -99,7 +99,41 @@ Output: `build/app/outputs/bundle/release/app-release.aab`
 
 ---
 
-## 5. Security & Privacy Architecture
+## 5. Automated GitHub Actions Signed APK & AAB CI/CD
+
+An automated pipeline is configured in `.github/workflows/build_signed_apk.yml` to compile and sign your Android APKs and AAB bundles on every push or manual trigger.
+
+### GitHub Repository Secrets Setup:
+Navigate to your GitHub Repository -> **Settings** -> **Secrets and variables** -> **Actions** -> **New repository secret**:
+
+| Secret Name | Value Description |
+|---|---|
+| `KEYSTORE_BASE64` | Base64-encoded string of your `upload-keystore.jks` file |
+| `KEYSTORE_PASSWORD` | Password for your Android keystore |
+| `KEY_ALIAS` | Alias name for the signing key (e.g. `upload`) |
+| `KEY_PASSWORD` | Password for the key alias |
+| `OCR_BACKEND_URL` | Your live backend OCR URL (e.g. `https://your-applet.run.app`) |
+
+> **Automated Fallback**: If `KEYSTORE_BASE64` is not yet configured, the CI workflow generates a valid self-signed release key automatically so your initial build finishes successfully!
+
+### Quick Keystore Generator Script:
+To generate your release keystore and get the base64 string in 1 command:
+```bash
+cd flutter_app
+chmod +x scripts/generate_keystore.sh
+./scripts/generate_keystore.sh
+```
+
+### Generated GitHub Artifacts:
+On completion, download the signed binaries under the **Actions** tab -> **Artifacts**:
+- `WriteScanAI-universal-release.apk` (Installs on any Android device)
+- `WriteScanAI-arm64-v8a-release.apk` (Optimized small APK for modern 64-bit phones)
+- `WriteScanAI-armeabi-v7a-release.apk` (For older 32-bit Android phones)
+- `WriteScanAI-playstore-release.aab` (Ready for Google Play Store Console)
+
+---
+
+## 6. Security & Privacy Architecture
 - **No API Secrets on Device**: The Flutter client never contains `GEMINI_API_KEY` or cloud credentials. All recognition requests are proxied through your secure backend service (`/api/ocr/recognize`).
 - **Zero Cloud Retention**: Images are processed in memory and discarded immediately after transcription. No user documents or photos are kept on server storage.
 - **Offline First**: All saved documents, extracted text, and thumbnails are stored securely in local device storage (SQLite/SharedPreferences).

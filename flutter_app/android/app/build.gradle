@@ -22,6 +22,13 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
+// Load signing keystore properties from key.properties or environment variables
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "com.writescan.ai"
     compileSdkVersion 34
@@ -49,12 +56,41 @@ android {
         multiDexEnabled true
     }
 
+    signingConfigs {
+        release {
+            def storeFilePath = System.getenv("ANDROID_KEYSTORE_PATH") ?: keystoreProperties['storeFile']
+            def storePasswordVal = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: keystoreProperties['storePassword']
+            def keyAliasVal = System.getenv("ANDROID_KEY_ALIAS") ?: keystoreProperties['keyAlias']
+            def keyPasswordVal = System.getenv("ANDROID_KEY_PASSWORD") ?: keystoreProperties['keyPassword']
+
+            if (storeFilePath != null && file(storeFilePath).exists()) {
+                storeFile file(storeFilePath)
+                storePassword storePasswordVal
+                keyAlias keyAliasVal
+                keyPassword keyPasswordVal
+            } else if (keystorePropertiesFile.exists() && keystoreProperties['storeFile'] != null) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            } else {
+                // Graceful fallback for local development without release keys
+                println "Notice: No release signing key found. Falling back to debug keys for local development."
+                signingConfig signingConfigs.debug
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            // Apply signed release configuration
+            signingConfig signingConfigs.release
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            signingConfig signingConfigs.debug
         }
     }
 }

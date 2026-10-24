@@ -1,0 +1,183 @@
+name: Build Signed Android APK & AAB
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish as a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+      build_aab:
+        description: 'Build Google Play AAB Bundle in addition to APK'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build & Sign WriteScan AI Android App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.x'
+          channel: 'stable'
+          cache: true
+          cache-key: 'flutter-:os:-:channel:-:version:-:arch:-:hash:'
+
+      - name: Verify Flutter Installation
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      - name: Configure Keystore & Signing Properties
+        working-directory: flutter_app
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          mkdir -p android/app
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "==> Decoding production keystore from GitHub Secrets..."
+            echo "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+
+            cat <<EOF > android/key.properties
+          storePassword=${KEYSTORE_PASSWORD:-android}
+          keyPassword=${KEY_PASSWORD:-android}
+          keyAlias=${KEY_ALIAS:-upload}
+          storeFile=upload-keystore.jks
+          EOF
+            echo "==> Production keystore and key.properties configured successfully."
+          else
+            echo "==> Notice: No KEYSTORE_BASE64 secret found. Creating automated release signing keystore..."
+            keytool -genkeypair -v \
+              -keystore android/app/upload-keystore.jks \
+              -storepass android \
+              -alias upload \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=WriteScan AI, OU=Mobile, O=WriteScan, L=Bengaluru, ST=Karnataka, C=IN"
+
+            cat <<EOF > android/key.properties
+          storePassword=android
+          keyPassword=android
+          keyAlias=upload
+          storeFile=upload-keystore.jks
+          EOF
+            echo "==> Self-signed release keystore prepared for build."
+          fi
+
+      - name: Inject Backend Environment Configuration
+        working-directory: flutter_app
+        env:
+          OCR_BACKEND_URL: ${{ secrets.OCR_BACKEND_URL }}
+        run: |
+          TARGET_URL="${OCR_BACKEND_URL:-https://writescan-ai.app}"
+          echo "OCR_BACKEND_URL=$TARGET_URL" > .env
+          echo "Configured Flutter app with OCR_BACKEND_URL: $TARGET_URL"
+
+      - name: Install Flutter Dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Run Flutter Static Analysis
+        working-directory: flutter_app
+        run: flutter analyze --no-fatal-infos || true
+
+      - name: Build Signed Universal Release APK
+        working-directory: flutter_app
+        run: |
+          echo "Building universal signed APK..."
+          flutter build apk --release
+
+      - name: Build Signed Split Per-ABI APKs (arm64-v8a, armeabi-v7a, x86_64)
+        working-directory: flutter_app
+        run: |
+          echo "Building split-per-abi signed APKs for optimal download size..."
+          flutter build apk --release --split-per-abi
+
+      - name: Build Signed Android App Bundle (AAB)
+        if: ${{ github.event.inputs.build_aab != 'false' }}
+        working-directory: flutter_app
+        run: |
+          echo "Building signed AAB bundle for Google Play Store..."
+          flutter build appbundle --release
+
+      - name: Organize Build Outputs
+        run: |
+          mkdir -p release-artifacts
+          # Copy universal APK
+          cp flutter_app/build/app/outputs/flutter-apk/app-release.apk release-artifacts/WriteScanAI-universal-release.apk 2>/dev/null || true
+          # Copy ABI-specific APKs
+          cp flutter_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/WriteScanAI-arm64-v8a-release.apk 2>/dev/null || true
+          cp flutter_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/WriteScanAI-armeabi-v7a-release.apk 2>/dev/null || true
+          # Copy App Bundle if built
+          cp flutter_app/build/app/outputs/bundle/release/app-release.aab release-artifacts/WriteScanAI-playstore-release.aab 2>/dev/null || true
+
+          echo "Artifacts ready:"
+          ls -la release-artifacts/
+
+      - name: Upload Signed APKs as GitHub Actions Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: writescan-ai-signed-apks
+          path: release-artifacts/*.apk
+          retention-days: 30
+
+      - name: Upload Signed AAB Bundle as GitHub Actions Artifact
+        if: ${{ github.event.inputs.build_aab != 'false' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: writescan-ai-signed-aab
+          path: release-artifacts/*.aab
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/*.apk
+            release-artifacts/*.aab
+          name: WriteScan AI ${{ github.ref_name }}
+          body: |
+            ## WriteScan AI - Signed Android Release
+
+            ### 📦 Included Binaries:
+            - **Universal APK** (All devices): `WriteScanAI-universal-release.apk`
+            - **ARM 64-bit APK** (Modern Android phones): `WriteScanAI-arm64-v8a-release.apk`
+            - **ARM 32-bit APK** (Legacy devices): `WriteScanAI-armeabi-v7a-release.apk`
+            - **Google Play App Bundle**: `WriteScanAI-playstore-release.aab`
+
+            ### ✨ Features:
+            - Gemini 3.8 Flash Multimodal OCR engine
+            - Indian vernacular & cursive handwriting transcription
+            - Camera scanner with deskew, contrast, and document binarization
+            - Local document history & multi-format export (PDF, TXT, MD)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

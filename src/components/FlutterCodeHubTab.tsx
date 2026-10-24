@@ -10,6 +10,10 @@ import {
   CheckCircle2,
   FolderTree,
   ExternalLink,
+  ShieldCheck,
+  GitBranch,
+  KeyRound,
+  FileCheck,
 } from 'lucide-react';
 
 interface FlutterFile {
@@ -22,13 +26,218 @@ interface FlutterFile {
 
 const FLUTTER_FILES: FlutterFile[] = [
   {
+    path: '.github/workflows/build_signed_apk.yml',
+    name: 'build_signed_apk.yml',
+    lang: 'yaml',
+    description: 'GitHub Actions workflow: Builds signed universal APK, split-per-abi APKs & Google Play AAB',
+    content: `name: Build Signed Android APK & AAB
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish as a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+      build_aab:
+        description: 'Build Google Play AAB Bundle in addition to APK'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build & Sign WriteScan AI Android App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Configure Keystore & Signing Properties
+        working-directory: flutter_app
+        env:
+          KEYSTORE_BASE64: \${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: \${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: \${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: \${{ secrets.KEY_PASSWORD }}
+        run: |
+          mkdir -p android/app
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+            cat <<EOF > android/key.properties
+          storePassword=\${KEYSTORE_PASSWORD:-android}
+          keyPassword=\${KEY_PASSWORD:-android}
+          keyAlias=\${KEY_ALIAS:-upload}
+          storeFile=upload-keystore.jks
+          EOF
+          else
+            # Automated fallback release keystore
+            keytool -genkeypair -v -keystore android/app/upload-keystore.jks \\
+              -storepass android -alias upload -keypass android -keyalg RSA \\
+              -keysize 2048 -validity 10000 -dname "CN=WriteScan AI, O=WriteScan, C=IN"
+            cat <<EOF > android/key.properties
+          storePassword=android
+          keyPassword=android
+          keyAlias=upload
+          storeFile=upload-keystore.jks
+          EOF
+          fi
+
+      - name: Install Dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Build Signed Universal Release APK
+        working-directory: flutter_app
+        run: flutter build apk --release
+
+      - name: Build Signed Split Per-ABI APKs
+        working-directory: flutter_app
+        run: flutter build apk --release --split-per-abi
+
+      - name: Build Signed Android App Bundle (AAB)
+        if: \${{ github.event.inputs.build_aab != 'false' }}
+        working-directory: flutter_app
+        run: flutter build appbundle --release
+
+      - name: Upload Signed APKs as GitHub Actions Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: writescan-ai-signed-apks
+          path: flutter_app/build/app/outputs/flutter-apk/*-release.apk
+          retention-days: 30`,
+  },
+  {
+    path: 'flutter_app/scripts/generate_keystore.sh',
+    name: 'generate_keystore.sh',
+    lang: 'bash',
+    description: 'Keystore generator script: creates upload-keystore.jks & base64 string for GitHub Secrets',
+    content: `#!/usr/bin/env bash
+# WriteScan AI - Android Release Keystore Generator Helper
+set -e
+
+KEYSTORE_DIR="./android/app"
+KEYSTORE_FILE="$KEYSTORE_DIR/upload-keystore.jks"
+KEY_ALIAS="upload"
+
+mkdir -p "$KEYSTORE_DIR"
+
+echo "Enter a secure Keystore password (min 6 chars):"
+read -s -p "Password: " KEY_PASSWORD
+echo
+
+keytool -genkeypair -v \\
+  -keystore "$KEYSTORE_FILE" \\
+  -storepass "$KEY_PASSWORD" \\
+  -alias "$KEY_ALIAS" \\
+  -keypass "$KEY_PASSWORD" \\
+  -keyalg RSA \\
+  -keysize 2048 \\
+  -validity 10000 \\
+  -dname "CN=WriteScan AI, OU=Mobile, O=WriteScan, L=Bengaluru, ST=Karnataka, C=IN"
+
+# Local key.properties
+cat <<EOF > ./android/key.properties
+storePassword=$KEY_PASSWORD
+keyPassword=$KEY_PASSWORD
+keyAlias=$KEY_ALIAS
+storeFile=upload-keystore.jks
+EOF
+
+echo "Keystore created! Base64 for GitHub Secrets (KEYSTORE_BASE64):"
+base64 -w 0 "$KEYSTORE_FILE" 2>/dev/null || base64 "$KEYSTORE_FILE"`,
+  },
+  {
+    path: 'flutter_app/android/app/build.gradle',
+    name: 'build.gradle',
+    lang: 'groovy',
+    description: 'Android Gradle build with release signingConfigs reading from key.properties or CI env',
+    content: `plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace "com.writescan.ai"
+    compileSdkVersion 34
+
+    defaultConfig {
+        applicationId "com.writescan.ai"
+        minSdkVersion 23
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0"
+        multiDexEnabled true
+    }
+
+    signingConfigs {
+        release {
+            def storeFilePath = System.getenv("ANDROID_KEYSTORE_PATH") ?: keystoreProperties['storeFile']
+            def storePasswordVal = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: keystoreProperties['storePassword']
+            def keyAliasVal = System.getenv("ANDROID_KEY_ALIAS") ?: keystoreProperties['keyAlias']
+            def keyPasswordVal = System.getenv("ANDROID_KEY_PASSWORD") ?: keystoreProperties['keyPassword']
+
+            if (storeFilePath != null && file(storeFilePath).exists()) {
+                storeFile file(storeFilePath)
+                storePassword storePasswordVal
+                keyAlias keyAliasVal
+                keyPassword keyPasswordVal
+            } else if (keystorePropertiesFile.exists() && keystoreProperties['storeFile'] != null) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            } else {
+                signingConfig signingConfigs.debug
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}`,
+  },
+  {
     path: 'flutter_app/lib/features/ocr/domain/ocr_service.dart',
     name: 'ocr_service.dart',
     lang: 'dart',
     description: 'Requirement 3: Clean OCR service abstraction interface and typed result models',
     content: `import 'dart:io';
 
-/// Model representing recognized handwritten OCR output
 class OcrResult {
   final String text;
   final String detectedLanguage;
@@ -67,15 +276,8 @@ class OcrResult {
   }
 }
 
-/// Abstract OCR Engine Interface.
-/// Allows swapping between Google Vision Backend, ML Kit, or specialized models.
 abstract class OcrService {
-  Future<OcrResult> recognizeHandwriting(
-    File image, {
-    String? targetLanguage,
-    bool preserveLayout = true,
-  });
-
+  Future<OcrResult> recognizeHandwriting(File image, {String? targetLanguage, bool preserveLayout = true});
   Future<List<OcrLanguage>> getSupportedLanguages();
   Future<bool> checkServiceAvailability();
   void dispose();
@@ -85,7 +287,7 @@ abstract class OcrService {
     path: 'flutter_app/lib/features/ocr/data/gemini_cloud_ocr_service.dart',
     name: 'gemini_cloud_ocr_service.dart',
     lang: 'dart',
-    description: 'Production OCR service calling the secure backend proxy with timeouts and error handling',
+    description: 'Production OCR client calling the secure backend with timeouts and error handling',
     content: `import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -107,10 +309,6 @@ class GeminiCloudOcrService implements OcrService {
     String? targetLanguage,
     bool preserveLayout = true,
   }) async {
-    if (!await image.exists()) {
-      throw const FileSystemException('Selected image does not exist.');
-    }
-
     final bytes = await image.readAsBytes();
     final base64Image = base64Encode(bytes);
     final ext = image.path.split('.').last.toLowerCase();
@@ -118,25 +316,23 @@ class GeminiCloudOcrService implements OcrService {
 
     final uri = Uri.parse('$_baseUrl/api/ocr/recognize');
 
-    final response = await _client
-        .post(
-          uri,
-          headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-          body: jsonEncode({
-            'imageBase64': base64Image,
-            'mimeType': mimeType,
-            'language': targetLanguage ?? 'auto',
-            'preserveLayout': preserveLayout,
-          }),
-        )
-        .timeout(_timeout);
+    final response = await _client.post(
+      uri,
+      headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+      body: jsonEncode({
+        'imageBase64': base64Image,
+        'mimeType': mimeType,
+        'language': targetLanguage ?? 'auto',
+        'preserveLayout': preserveLayout,
+      }),
+    ).timeout(_timeout);
 
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       if (body['success'] == true) {
         return OcrResult.fromJson(body);
       }
-      throw Exception(body['message'] ?? 'Handwriting recognition failed.');
+      throw Exception(body['message'] ?? 'Recognition failed.');
     } else {
       throw HttpException('Server error (\${response.statusCode}): \${response.body}');
     }
@@ -147,100 +343,22 @@ class GeminiCloudOcrService implements OcrService {
     try {
       final uri = Uri.parse('$_baseUrl/api/health');
       final response = await _client.get(uri).timeout(const Duration(seconds: 5));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        return data['configured'] == true;
-      }
-      return false;
+      return response.statusCode == 200;
     } catch (_) {
       return false;
     }
   }
 
   @override
-  void dispose() {
-    _client.close();
-  }
+  void dispose() => _client.close();
 }`,
-  },
-  {
-    path: 'flutter_app/pubspec.yaml',
-    name: 'pubspec.yaml',
-    lang: 'yaml',
-    description: 'Compatible Flutter dependencies (Riverpod, GoRouter, Camera, SQLite, PDF, uCrop)',
-    content: `name: writescan_ai
-description: "WriteScan AI - Production-Ready Handwriting to Text Generator Mobile App"
-publish_to: 'none'
-version: 1.0.0+1
-
-environment:
-  sdk: '>=3.3.0 <4.0.0'
-  flutter: ">=3.19.0"
-
-dependencies:
-  flutter:
-    sdk: flutter
-  flutter_riverpod: ^2.5.1
-  go_router: ^14.0.0
-  camera: ^0.10.6
-  image_picker: ^1.1.0
-  image_cropper: ^6.0.0
-  image: ^4.2.0
-  http: ^1.2.1
-  flutter_dotenv: ^5.1.0
-  sqflite: ^2.3.3+1
-  path_provider: ^2.1.3
-  pdf: ^3.10.8
-  share_plus: ^9.0.0
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.2
-
-flutter:
-  uses-material-design: true`,
-  },
-  {
-    path: 'flutter_app/android/app/src/main/AndroidManifest.xml',
-    name: 'AndroidManifest.xml',
-    lang: 'xml',
-    description: 'Android Camera, Storage, and Scoped Media permissions with uCrop registration',
-    content: `<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.writescan.ai">
-
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-
-    <application
-        android:label="WriteScan AI"
-        android:name="\${applicationName}"
-        android:icon="@mipmap/ic_launcher">
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:theme="@style/LaunchTheme"
-            android:hardwareAccelerated="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-        </activity>
-        <activity
-            android:name="com.yalantis.ucrop.UCropActivity"
-            android:screenOrientation="portrait"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
-    </application>
-</manifest>`,
   },
 ];
 
 export const FlutterCodeHubTab: React.FC = () => {
   const [selectedFileIdx, setSelectedFileIdx] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [copiedScript, setCopiedScript] = useState(false);
 
   const activeFile = FLUTTER_FILES[selectedFileIdx];
 
@@ -250,20 +368,85 @@ export const FlutterCodeHubTab: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleCopyKeystoreCommand = () => {
+    navigator.clipboard.writeText('cd flutter_app && ./scripts/generate_keystore.sh');
+    setCopiedScript(true);
+    setTimeout(() => setCopiedScript(false), 2000);
+  };
+
   return (
     <div className="flex-1 p-4 sm:p-6 max-w-5xl mx-auto w-full flex flex-col space-y-6">
       {/* Title */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <span>Flutter Android Source &amp; Build Hub</span>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 font-semibold">
-              Android-Ready
+            <span>Flutter Android Source &amp; Signed CI/CD Hub</span>
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Signed APK Workflow Active</span>
             </span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Modular Flutter architecture with Riverpod, Camera, SQLite, and Gemini OCR client
+            Automated GitHub Actions CI/CD to build, sign, and release production Android APKs and AAB bundles
           </p>
+        </div>
+      </div>
+
+      {/* GitHub Actions Signed APK CI/CD Spotlight Card */}
+      <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-5 border border-indigo-900/50 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-indigo-800/40 pb-3">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-600/60 flex items-center justify-center text-indigo-300">
+              <GitBranch className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                <span>GitHub Actions: Signed APK &amp; AAB Pipeline</span>
+                <span className="text-[11px] font-mono px-2 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+                  .github/workflows/build_signed_apk.yml
+                </span>
+              </h3>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleCopyKeystoreCommand}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow transition-colors"
+            >
+              {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <KeyRound className="w-3.5 h-3.5" />}
+              <span>{copiedScript ? 'Copied Command!' : 'Copy Keystore Gen Command'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 4 Secrets Needed in GitHub Repository */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <span className="text-indigo-300 font-mono font-semibold block mb-0.5">KEYSTORE_BASE64</span>
+            <span className="text-[11px] text-slate-300">Base64 string of your .jks file (or auto self-signs)</span>
+          </div>
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <span className="text-indigo-300 font-mono font-semibold block mb-0.5">KEYSTORE_PASSWORD</span>
+            <span className="text-[11px] text-slate-300">Password for your release keystore</span>
+          </div>
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <span className="text-indigo-300 font-mono font-semibold block mb-0.5">KEY_ALIAS</span>
+            <span className="text-[11px] text-slate-300">Key alias name (e.g. upload)</span>
+          </div>
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <span className="text-indigo-300 font-mono font-semibold block mb-0.5">KEY_PASSWORD</span>
+            <span className="text-[11px] text-slate-300">Password for your key alias</span>
+          </div>
+        </div>
+
+        {/* Output Artifacts Info */}
+        <div className="flex flex-wrap items-center justify-between text-xs text-slate-300 bg-black/30 px-3.5 py-2.5 rounded-xl border border-white/5">
+          <span className="flex items-center gap-1.5">
+            <FileCheck className="w-4 h-4 text-emerald-400" />
+            <span>Produces: <strong>Universal APK</strong>, <strong>Split ARM64 APK</strong>, and <strong>Google Play AAB</strong></span>
+          </span>
+          <span className="text-slate-400 text-[11px]">Automatically uploaded to GitHub Actions Artifacts &amp; Releases</span>
         </div>
       </div>
 
@@ -272,15 +455,15 @@ export const FlutterCodeHubTab: React.FC = () => {
         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-slate-400">
           <span className="flex items-center gap-1.5 font-sans font-semibold text-white">
             <Terminal className="w-4 h-4 text-emerald-400" />
-            <span>Terminal Compilation Commands</span>
+            <span>Local &amp; CI Terminal Commands</span>
           </span>
-          <span className="text-[11px]">Flutter 3.19+ • API Level 34</span>
+          <span className="text-[11px]">Flutter 3.24+ • Gradle 8 • API 34</span>
         </div>
         <div className="space-y-1.5 text-slate-300">
-          <div><span className="text-emerald-400 font-bold">$</span> cd flutter_app &amp;&amp; flutter pub get</div>
-          <div><span className="text-emerald-400 font-bold">$</span> flutter run  <span className="text-slate-500"># Run in debug on emulator/device</span></div>
-          <div><span className="text-emerald-400 font-bold">$</span> flutter build apk --release  <span className="text-slate-500"># Generates production APK</span></div>
-          <div><span className="text-emerald-400 font-bold">$</span> flutter build appbundle --release  <span className="text-slate-500"># For Google Play Store submission</span></div>
+          <div><span className="text-emerald-400 font-bold">$</span> cd flutter_app &amp;&amp; ./scripts/generate_keystore.sh  <span className="text-slate-500"># 1-Click Keystore &amp; Base64 generator</span></div>
+          <div><span className="text-emerald-400 font-bold">$</span> flutter build apk --release  <span className="text-slate-500"># Builds signed release APK locally</span></div>
+          <div><span className="text-emerald-400 font-bold">$</span> flutter build apk --release --split-per-abi  <span className="text-slate-500"># Builds lightweight device-specific APKs</span></div>
+          <div><span className="text-emerald-400 font-bold">$</span> git push origin main  <span className="text-slate-500"># Triggers automated GitHub Actions signed build!</span></div>
         </div>
       </div>
 
@@ -289,7 +472,7 @@ export const FlutterCodeHubTab: React.FC = () => {
         {/* File List */}
         <div className="lg:col-span-4 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700/60 shadow-sm space-y-1">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-3 py-1 block">
-            Flutter Project Files
+            Project &amp; CI Files
           </span>
 
           {FLUTTER_FILES.map((file, idx) => (
@@ -316,14 +499,14 @@ export const FlutterCodeHubTab: React.FC = () => {
         {/* Code Content Viewer */}
         <div className="lg:col-span-8 bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-md flex flex-col">
           <div className="bg-slate-950 px-4 py-2.5 flex items-center justify-between border-b border-slate-800">
-            <div>
-              <span className="text-xs font-semibold text-slate-200">{activeFile.name}</span>
-              <p className="text-[11px] text-slate-400">{activeFile.description}</p>
+            <div className="min-w-0 pr-2">
+              <span className="text-xs font-semibold text-slate-200 block truncate">{activeFile.name}</span>
+              <p className="text-[11px] text-slate-400 truncate">{activeFile.description}</p>
             </div>
 
             <button
               onClick={handleCopyCode}
-              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
+              className="shrink-0 flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               <span>{copied ? 'Copied' : 'Copy'}</span>

@@ -1,0 +1,8 @@
+# Keystore Configuration for Signed Android Builds
+# Copy this file to key.properties and configure your credentials.
+# NEVER commit key.properties or your .jks file to public git repositories!
+
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=upload
+storeFile=upload-keystore.jks
