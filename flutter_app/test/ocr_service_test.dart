@@ -189,6 +189,7 @@ void main() {
 
     test('recognizeHandwriting returns OcrResult on successful 200 response', () async {
       final tempDir = await Directory.systemTemp.createTemp('ocr_test');
+      addTearDown(() => tempDir.delete(recursive: true));
       final tempFile = File('${tempDir.path}/sample.jpg');
       await tempFile.writeAsBytes([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46]);
 
@@ -225,8 +226,6 @@ void main() {
       expect(result.text, contains('नमस्ते दुनिया'));
       expect(result.detectedLanguage, 'Hindi');
       expect(result.confidenceScore, 94);
-
-      await tempDir.delete(recursive: true);
     });
 
     test('recognizeHandwriting throws FileSystemException when file does not exist', () async {
@@ -236,14 +235,15 @@ void main() {
         baseUrl: 'http://localhost:3000',
       );
 
-      expect(
-        () => service.recognizeHandwriting(nonExistentFile),
+      await expectLater(
+        service.recognizeHandwriting(nonExistentFile),
         throwsA(isA<FileSystemException>()),
       );
     });
 
     test('recognizeHandwriting throws FormatException when file is 0 bytes', () async {
       final tempDir = await Directory.systemTemp.createTemp('ocr_empty_test');
+      addTearDown(() => tempDir.delete(recursive: true));
       final emptyFile = File('${tempDir.path}/empty.jpg');
       await emptyFile.writeAsBytes([]);
 
@@ -252,16 +252,15 @@ void main() {
         baseUrl: 'http://localhost:3000',
       );
 
-      expect(
-        () => service.recognizeHandwriting(emptyFile),
+      await expectLater(
+        service.recognizeHandwriting(emptyFile),
         throwsA(isA<FormatException>()),
       );
-
-      await tempDir.delete(recursive: true);
     });
 
     test('recognizeHandwriting throws HttpException on 503 (GEMINI_API_KEY missing)', () async {
       final tempDir = await Directory.systemTemp.createTemp('ocr_503_test');
+      addTearDown(() => tempDir.delete(recursive: true));
       final sampleFile = File('${tempDir.path}/sample.jpg');
       await sampleFile.writeAsBytes([0x01, 0x02, 0x03]);
 
@@ -278,16 +277,15 @@ void main() {
         baseUrl: 'http://localhost:3000',
       );
 
-      expect(
-        () => service.recognizeHandwriting(sampleFile),
+      await expectLater(
+        service.recognizeHandwriting(sampleFile),
         throwsA(predicate((e) => e is HttpException && e.message.contains('GEMINI_API_KEY'))),
       );
-
-      await tempDir.delete(recursive: true);
     });
 
     test('recognizeHandwriting throws FormatException on 400 (Bad image payload)', () async {
       final tempDir = await Directory.systemTemp.createTemp('ocr_400_test');
+      addTearDown(() => tempDir.delete(recursive: true));
       final sampleFile = File('${tempDir.path}/corrupt.jpg');
       await sampleFile.writeAsBytes([0x01, 0x02, 0x03]);
 
@@ -304,16 +302,15 @@ void main() {
         baseUrl: 'http://localhost:3000',
       );
 
-      expect(
-        () => service.recognizeHandwriting(sampleFile),
+      await expectLater(
+        service.recognizeHandwriting(sampleFile),
         throwsA(isA<FormatException>()),
       );
-
-      await tempDir.delete(recursive: true);
     });
 
     test('recognizeHandwriting translates HandshakeException into diagnostic SSL message', () async {
       final tempDir = await Directory.systemTemp.createTemp('ocr_ssl_test');
+      addTearDown(() => tempDir.delete(recursive: true));
       final sampleFile = File('${tempDir.path}/sample.jpg');
       await sampleFile.writeAsBytes([0x01, 0x02, 0x03]);
 
@@ -328,15 +325,13 @@ void main() {
         baseUrl: 'https://writescan-ai.app',
       );
 
-      expect(
-        () => service.recognizeHandwriting(sampleFile),
+      await expectLater(
+        service.recognizeHandwriting(sampleFile),
         throwsA(predicate((e) =>
             e is HttpException &&
             e.message.contains('SSL Certificate Verification Failed') &&
             e.message.contains('fullchain.pem'))),
       );
-
-      await tempDir.delete(recursive: true);
     });
   });
 }

@@ -189,6 +189,11 @@ j50uTsKOFguUvAglj6GeuSfkZU9qYBGV1ZB65d3v0UMHzP415N2d7v6n50uTsKOF
       throw const FileSystemException('Selected image file does not exist on device storage.');
     }
 
+    final length = await image.length();
+    if (length == 0) {
+      throw const FormatException('Image file is empty (0 bytes).');
+    }
+
     final bytes = await image.readAsBytes();
     if (bytes.isEmpty) {
       throw const FormatException('Image file is empty (0 bytes).');
