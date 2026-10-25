@@ -13,9 +13,12 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final TextEditingController _urlController = TextEditingController();
+  final TextEditingController _apiKeyController = TextEditingController();
   late GeminiCloudOcrService _ocrService;
 
   bool _isTesting = false;
+  bool _isTestingApiKey = false;
+  bool _obscureApiKey = true;
   ServiceHealthInfo? _lastHealthInfo;
   DocumentRetentionPolicy _retentionPolicy = DocumentRetentionPolicy.indefinite;
   String _defaultLanguage = 'auto';
@@ -35,6 +38,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await prefs.setString('custom_ocr_backend_url', savedUrl);
     }
     final savedLang = prefs.getString('default_ocr_language') ?? 'auto';
+    final savedApiKey = prefs.getString('user_gemini_api_key') ?? '';
 
     final repo = ref.read(documentRepositoryProvider);
     final policy = await repo.getRetentionPolicy();
@@ -42,7 +46,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (mounted) {
       setState(() {
         _urlController.text = savedUrl;
+        _apiKeyController.text = savedApiKey;
         _ocrService.updateBaseUrl(savedUrl);
+        if (savedApiKey.isNotEmpty) {
+          _ocrService.setDirectApiKey(savedApiKey);
+        }
         _defaultLanguage = savedLang;
         _retentionPolicy = policy;
       });
@@ -52,6 +60,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void dispose() {
     _urlController.dispose();
+    _apiKeyController.dispose();
     _ocrService.dispose();
     super.dispose();
   }
@@ -75,6 +84,63 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _lastHealthInfo = info;
       _isTesting = false;
     });
+  }
+
+  Future<void> _saveAndTestApiKey() async {
+    final key = _apiKeyController.text.trim();
+    if (key.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a Gemini API Key.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isTestingApiKey = true;
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_gemini_api_key', key);
+    _ocrService.setDirectApiKey(key);
+
+    final info = await _ocrService.getHealthStatus();
+
+    if (!mounted) return;
+    setState(() {
+      _lastHealthInfo = info;
+      _isTestingApiKey = false;
+    });
+
+    if (info.isHealthy) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Connected to Google Gemini Vision! Standalone mode active.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Gemini Key verification failed: ${info.errorMessage ?? "Invalid key"}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _clearApiKey() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('user_gemini_api_key');
+    _apiKeyController.clear();
+    _ocrService.setDirectApiKey(null);
+    setState(() {
+      _lastHealthInfo = null;
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cleared Gemini API Key. Switched back to Backend Server mode.')),
+      );
+    }
   }
 
   Future<void> _updateRetentionPolicy(DocumentRetentionPolicy policy) async {
@@ -205,22 +271,49 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey),
                   ),
                   const SizedBox(height: 6),
-                  TextField(
+                    TextField(
                     controller: _urlController,
+                    onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
                       isDense: true,
-                      hintText: 'http://10.0.2.2:3000 or http://192.168.x.x:3000',
+                      hintText: 'http://192.168.x.x:3000 or http://10.0.2.2:3000',
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                       suffixIcon: IconButton(
                         icon: const Icon(Icons.refresh, size: 20),
                         tooltip: 'Reset to default emulator URL',
                         onPressed: () {
                           _urlController.text = 'http://10.0.2.2:3000';
+                          setState(() {});
                         },
                       ),
                     ),
                   ),
                   const SizedBox(height: 8),
+
+                  if (_urlController.text.contains('10.0.2.2')) ...[
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.amber.shade300),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.info_outline, size: 16, color: Colors.amber.shade900),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Physical Phone Notice: "10.0.2.2" only works inside PC emulators. If testing on a real phone, use "Local LAN" (same Wi-Fi) or "Direct Gemini API" below.',
+                              style: TextStyle(fontSize: 11, color: Colors.amber.shade900),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
 
                   // Quick presets for convenience
                   Wrap(
@@ -228,17 +321,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     runSpacing: 6,
                     children: [
                       ActionChip(
-                        avatar: const Icon(Icons.android, size: 14),
-                        label: const Text('Emulator (10.0.2.2)', style: TextStyle(fontSize: 11)),
+                        avatar: const Icon(Icons.wifi, size: 14),
+                        label: const Text('Local LAN (192.168.1.x)', style: TextStyle(fontSize: 11)),
                         onPressed: () {
-                          _urlController.text = 'http://10.0.2.2:3000';
+                          _urlController.text = 'http://192.168.1.100:3000';
+                          setState(() {});
                         },
                       ),
                       ActionChip(
                         avatar: const Icon(Icons.wifi, size: 14),
-                        label: const Text('Local LAN (192.168.x.x)', style: TextStyle(fontSize: 11)),
+                        label: const Text('Local LAN (192.168.0.x)', style: TextStyle(fontSize: 11)),
                         onPressed: () {
-                          _urlController.text = 'http://192.168.1.100:3000';
+                          _urlController.text = 'http://192.168.0.100:3000';
+                          setState(() {});
+                        },
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.android, size: 14),
+                        label: const Text('Emulator (10.0.2.2)', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          _urlController.text = 'http://10.0.2.2:3000';
+                          setState(() {});
                         },
                       ),
                     ],
@@ -264,7 +367,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ),
                   ),
-                  if (_lastHealthInfo != null) ...[
+                  if (_lastHealthInfo != null && !_ocrService.isDirectApiMode) ...[
                     const Divider(height: 24),
                     Text(
                       'Verified Model: ${_lastHealthInfo!.model}',
@@ -306,6 +409,125 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                       ),
                     ],
+                  ],
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Direct Gemini API Mode (Standalone - Ideal for physical devices & 5G)
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: _ocrService.isDirectApiMode ? Colors.purple.shade300 : Colors.grey.shade200,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.auto_awesome, color: Colors.purple.shade700),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Direct Gemini API (Standalone Mode)',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      if (_ocrService.isDirectApiMode)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.purple.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.purple.shade200),
+                          ),
+                          child: const Text(
+                            'Active',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.purple,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Best for Physical Phones & Mobile Data (5G/4G). '
+                    'Enter your Gemini API key to run OCR directly from your phone without needing a PC server running.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _apiKeyController,
+                    obscureText: _obscureApiKey,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: 'AIzaSy...',
+                      labelText: 'Your Gemini API Key (Stored Locally On-Device)',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscureApiKey ? Icons.visibility_off : Icons.visibility,
+                          size: 20,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscureApiKey = !_obscureApiKey;
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _isTestingApiKey ? null : _saveAndTestApiKey,
+                          icon: _isTestingApiKey
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.check, size: 16),
+                          label: Text(_isTestingApiKey ? 'Verifying...' : 'Save & Activate Key'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.purple.shade700,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                      if (_ocrService.isDirectApiMode) ...[
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: _clearApiKey,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red.shade700,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: const Text('Clear Key'),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (_ocrService.isDirectApiMode && _lastHealthInfo != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Direct Engine: Google Gemini Vision 2.5 Flash (${_lastHealthInfo!.latencyMs}ms)',
+                      style: TextStyle(fontSize: 11, color: Colors.purple.shade900, fontWeight: FontWeight.w600),
+                    ),
                   ],
                 ],
               ),

@@ -65,10 +65,17 @@ flutter_app/
    ```
    Add your OCR backend URL:
    ```env
-   OCR_BACKEND_URL=http://10.0.2.2:3000   # For Android Emulator pointing to local host
-   # Or your deployed Cloud Run URL:
-   # OCR_BACKEND_URL=https://your-applet-url.run.app
+   # For Android Emulator pointing to host PC:
+   OCR_BACKEND_URL=http://10.0.2.2:3000
+
+   # For Physical Android Phone on same Wi-Fi (replace with your PC's IP):
+   # OCR_BACKEND_URL=http://192.168.1.50:3000
+
+   # Or deployed Cloud Run / Tunnel URL:
+   # OCR_BACKEND_URL=https://your-domain-or-tunnel.com
    ```
+
+   *Note for Physical Android Devices*: `10.0.2.2` only routes inside Android Studio emulator. On physical devices, configure your PC's Wi-Fi IP in Settings or enter a Direct Gemini API key in the app Settings tab to run standalone without a PC server!
 
 3. Run on connected Android device or emulator:
    ```bash

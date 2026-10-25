@@ -137,6 +137,19 @@ j50uTsKOFguUvAglj6GeuSfkZU9qYBGV1ZB65d3v0UMHzP415N2d7v6n50uTsKOF
     }
   }
 
+  String? _directApiKey;
+
+  String? get directApiKey => _directApiKey;
+  bool get isDirectApiMode => _directApiKey != null && _directApiKey!.trim().isNotEmpty;
+
+  void setDirectApiKey(String? key) {
+    if (key == null || key.trim().isEmpty) {
+      _directApiKey = null;
+    } else {
+      _directApiKey = key.trim();
+    }
+  }
+
   static String _resolveInitialBaseUrl() {
     try {
       if (dotenv.isInitialized) {
@@ -168,13 +181,19 @@ j50uTsKOFguUvAglj6GeuSfkZU9qYBGV1ZB65d3v0UMHzP415N2d7v6n50uTsKOF
     }
   }
 
-  /// Load custom server URL from SharedPreferences
+  /// Load custom server URL and user API key from SharedPreferences
   Future<void> loadPersistedUrl() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedUrl = prefs.getString('custom_ocr_backend_url');
       if (savedUrl != null && savedUrl.trim().isNotEmpty) {
         updateBaseUrl(savedUrl);
+      }
+      final savedKey = prefs.getString('user_gemini_api_key');
+      if (savedKey != null && savedKey.trim().isNotEmpty) {
+        _directApiKey = savedKey.trim();
+      } else {
+        _directApiKey = null;
       }
     } catch (_) {}
   }
@@ -199,10 +218,20 @@ j50uTsKOFguUvAglj6GeuSfkZU9qYBGV1ZB65d3v0UMHzP415N2d7v6n50uTsKOF
       throw const FormatException('Image file is empty (0 bytes).');
     }
 
-    final base64Image = base64Encode(bytes);
     final ext = image.path.split('.').last.toLowerCase();
     final mimeType = ext == 'png' ? 'image/png' : (ext == 'webp' ? 'image/webp' : 'image/jpeg');
 
+    // Standalone on-device mode: direct call to Google Gemini Vision API
+    if (isDirectApiMode) {
+      return _recognizeWithDirectGeminiApi(
+        bytes: bytes,
+        mimeType: mimeType,
+        targetLanguage: targetLanguage,
+        preserveLayout: preserveLayout,
+      );
+    }
+
+    final base64Image = base64Encode(bytes);
     final uri = Uri.parse('$_baseUrl/api/ocr/recognize');
 
     try {
@@ -248,9 +277,158 @@ j50uTsKOFguUvAglj6GeuSfkZU9qYBGV1ZB65d3v0UMHzP415N2d7v6n50uTsKOF
     } on CertificateException catch (e) {
       throw HttpException('Certificate Validation Error ($e). The SSL certificate provided by $_baseUrl is invalid or expired.');
     } on SocketException catch (e) {
+      if (_baseUrl.contains('10.0.2.2')) {
+        throw SocketException(
+          'Cannot connect to http://10.0.2.2:3000.\n\n'
+          'Why this happened:\n'
+          '• "10.0.2.2" is the Android PC Emulator loopback IP. It cannot be reached from a physical phone.\n\n'
+          'How to fix on your phone:\n'
+          '1. Connect your phone & computer to the SAME Wi-Fi.\n'
+          '2. Find your PC\'s Wi-Fi IP (e.g., 192.168.1.xxx) and enter http://YOUR_PC_IP:3000 in Settings.\n'
+          '3. Or if testing over mobile data, enter a tunnel URL or use Direct Gemini API Mode in Settings.\n\n'
+          'Original error: $e',
+        );
+      }
       throw SocketException(
         'Cannot connect to OCR server at $_baseUrl. Check network connection or verify server IP in Settings. ($e)',
       );
+    } on http.ClientException catch (e) {
+      if (e.message.contains('CERTIFICATE_VERIFY_FAILED') || e.message.contains('Handshake')) {
+        throw HttpException(
+          'SSL Certificate Verification Failed ($e).\n\n'
+          'Root Cause: The server certificate at $_baseUrl could not be verified by the trust store.\n'
+          'Troubleshooting:\n'
+          '1. Ensure server serves complete certificate chain (fullchain.pem).\n'
+          '2. Verify device system date and time.\n'
+          '3. Check Settings > OCR Proxy Server URL.',
+        );
+      }
+      if (_baseUrl.contains('10.0.2.2')) {
+        throw SocketException(
+          'Cannot connect to http://10.0.2.2:3000.\n\n'
+          'Why this happened:\n'
+          '• "10.0.2.2" is the Android PC Emulator loopback IP. It cannot be reached from a physical phone.\n\n'
+          'How to fix on your phone:\n'
+          '1. Connect your phone & computer to the SAME Wi-Fi.\n'
+          '2. Find your PC\'s Wi-Fi IP (e.g., 192.168.1.xxx) and enter http://YOUR_PC_IP:3000 in Settings.\n'
+          '3. Or if testing over mobile data, enter a tunnel URL or use Direct Gemini API Mode in Settings.\n\n'
+          'Original error: $e',
+        );
+      }
+      throw SocketException(
+        'Cannot connect to OCR server at $_baseUrl. Check network connection or verify server IP in Settings. ($e)',
+      );
+    }
+  }
+
+  /// Direct on-device handwriting recognition calling Google Gemini Multimodal Vision API
+  Future<OcrResult> _recognizeWithDirectGeminiApi({
+    required List<int> bytes,
+    required String mimeType,
+    String? targetLanguage,
+    bool preserveLayout = true,
+  }) async {
+    final startTime = DateTime.now();
+    final base64Image = base64Encode(bytes);
+    final geminiUri = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_directApiKey',
+    );
+
+    try {
+      final response = await _client
+          .post(
+            geminiUri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'contents': [
+                {
+                  'parts': [
+                    {
+                      'inlineData': {
+                        'mimeType': mimeType,
+                        'data': base64Image,
+                      }
+                    },
+                    {
+                      'text':
+                          'You are WriteScan AI, an expert handwriting recognition and OCR specialist. '
+                          'Faithfully transcribe and extract all handwritten notes, cursive text, printed annotations, formulas, '
+                          'and diagrams from this image in high fidelity. Preserve line breaks, paragraphs, and indentation. '
+                          '${targetLanguage != null && targetLanguage != 'auto' ? 'Expected language: $targetLanguage.' : 'Auto-detect all languages including Hindi/Devanagari, Marathi, Tamil, Bengali, English.'} '
+                          'Output ONLY the extracted transcription without markdown code fences or conversational filler.',
+                    }
+                  ]
+                }
+              ],
+              'generationConfig': {
+                'temperature': 0.1,
+              }
+            }),
+          )
+          .timeout(_timeout);
+
+      final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> body = jsonDecode(response.body) as Map<String, dynamic>;
+        final candidates = body['candidates'] as List<dynamic>?;
+        if (candidates == null || candidates.isEmpty) {
+          throw const FormatException('Gemini did not return any transcription candidates for this image.');
+        }
+
+        final parts = (candidates[0]['content']?['parts'] as List<dynamic>?) ?? [];
+        final text = parts.map((p) => p['text'] as String? ?? '').join('').trim();
+
+        if (text.isEmpty) {
+          throw const FormatException('Gemini returned empty transcription text. Check image clarity.');
+        }
+
+        final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+        final lines = text.split('\n').length;
+
+        // Script-based language detection
+        String detectedLang = 'English';
+        String detectedCode = 'en';
+        if (RegExp(r'[\u0900-\u097F]').hasMatch(text)) {
+          detectedLang = 'Hindi';
+          detectedCode = 'hi';
+        } else if (RegExp(r'[\u0980-\u09FF]').hasMatch(text)) {
+          detectedLang = 'Bengali';
+          detectedCode = 'bn';
+        } else if (RegExp(r'[\u0B80-\u0BFF]').hasMatch(text)) {
+          detectedLang = 'Tamil';
+          detectedCode = 'ta';
+        } else if (RegExp(r'[\u0C00-\u0C7F]').hasMatch(text)) {
+          detectedLang = 'Telugu';
+          detectedCode = 'te';
+        }
+
+        return OcrResult(
+          text: text,
+          detectedLanguage: detectedLang,
+          languageCode: detectedCode,
+          confidenceScore: 95,
+          confidenceRating: 'HIGH',
+          wordCount: words,
+          lineCount: lines,
+          processingTimeMs: elapsedMs,
+          warnings: const [],
+        );
+      } else if (response.statusCode == 400 || response.statusCode == 403) {
+        throw HttpException(
+          'Gemini API authentication failed (HTTP ${response.statusCode}). Please verify your Gemini API Key in Settings.',
+        );
+      } else if (response.statusCode == 429) {
+        throw const HttpException('Gemini API rate limit exceeded. Please wait a few moments and try again.');
+      } else {
+        throw HttpException('Gemini API Error (${response.statusCode}): ${response.reasonPhrase ?? response.body}');
+      }
+    } on HandshakeException catch (e) {
+      throw HttpException('SSL Handshake error connecting to Google Gemini API ($e).');
+    } on SocketException catch (e) {
+      throw SocketException('Cannot connect to Google Gemini API. Check your internet connection. ($e)');
+    } on http.ClientException catch (e) {
+      throw SocketException('Network connection error: $e. Check your internet or mobile data connection.');
     }
   }
 
@@ -295,6 +473,47 @@ j50uTsKOFguUvAglj6GeuSfkZU9qYBGV1ZB65d3v0UMHzP415N2d7v6n50uTsKOF
   /// Live ping to backend returning detailed connectivity info
   Future<ServiceHealthInfo> getHealthStatus() async {
     final stopwatch = Stopwatch()..start();
+
+    // Direct Gemini API ping
+    if (isDirectApiMode) {
+      try {
+        final uri = Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/models?key=$_directApiKey',
+        );
+        final response = await _client.get(uri).timeout(const Duration(seconds: 8));
+        stopwatch.stop();
+
+        if (response.statusCode == 200) {
+          return ServiceHealthInfo(
+            isHealthy: true,
+            isConfigured: true,
+            serviceName: 'Google Gemini Direct API (On-Device)',
+            model: 'gemini-2.5-flash',
+            latencyMs: stopwatch.elapsedMilliseconds,
+          );
+        } else {
+          return ServiceHealthInfo(
+            isHealthy: false,
+            isConfigured: false,
+            serviceName: 'Google Gemini Direct API',
+            model: 'gemini-2.5-flash',
+            latencyMs: stopwatch.elapsedMilliseconds,
+            errorMessage: 'API Key Rejected (HTTP ${response.statusCode}). Please check your key in Settings.',
+          );
+        }
+      } catch (e) {
+        stopwatch.stop();
+        return ServiceHealthInfo(
+          isHealthy: false,
+          isConfigured: false,
+          serviceName: 'Google Gemini Direct API',
+          model: 'gemini-2.5-flash',
+          latencyMs: stopwatch.elapsedMilliseconds,
+          errorMessage: 'Cannot connect to Gemini API: $e',
+        );
+      }
+    }
+
     try {
       final uri = Uri.parse('$_baseUrl/api/health');
       final response = await _client.get(uri).timeout(const Duration(seconds: 8));
@@ -341,13 +560,17 @@ j50uTsKOFguUvAglj6GeuSfkZU9qYBGV1ZB65d3v0UMHzP415N2d7v6n50uTsKOF
       );
     } catch (e) {
       stopwatch.stop();
+      String msg = e.toString();
+      if (_baseUrl.contains('10.0.2.2')) {
+        msg = 'Connection timed out to 10.0.2.2. If you are running on a physical phone, 10.0.2.2 is an emulator IP. Please enter your computer\'s Wi-Fi IP (e.g. http://192.168.1.xxx:3000) or tunnel URL.';
+      }
       return ServiceHealthInfo(
         isHealthy: false,
         isConfigured: false,
         serviceName: 'WriteScan OCR Server',
         model: 'Unavailable',
         latencyMs: stopwatch.elapsedMilliseconds,
-        errorMessage: e.toString(),
+        errorMessage: msg,
       );
     }
   }

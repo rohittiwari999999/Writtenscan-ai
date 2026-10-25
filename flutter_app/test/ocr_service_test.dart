@@ -333,5 +333,63 @@ void main() {
             e.message.contains('fullchain.pem'))),
       );
     });
+
+    test('recognizeHandwriting translates 10.0.2.2 connection error into physical phone diagnostic', () async {
+      final tempDir = await Directory.systemTemp.createTemp('ocr_emulator_test');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final sampleFile = File('${tempDir.path}/sample.jpg');
+      await sampleFile.writeAsBytes([0x01, 0x02, 0x03]);
+
+      final mockClient = MockClient((request) async {
+        throw const SocketException('OS Error: Connection timed out, errno = 110');
+      });
+
+      final service = GeminiCloudOcrService(
+        client: mockClient,
+        baseUrl: 'http://10.0.2.2:3000',
+      );
+
+      await expectLater(
+        service.recognizeHandwriting(sampleFile),
+        throwsA(predicate((e) =>
+            e is SocketException &&
+            e.message.contains('10.0.2.2') &&
+            e.message.contains('Emulator'))),
+      );
+    });
+
+    test('recognizeHandwriting with Direct Gemini API mode returns valid OcrResult', () async {
+      final tempDir = await Directory.systemTemp.createTemp('ocr_direct_test');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final sampleFile = File('${tempDir.path}/sample.jpg');
+      await sampleFile.writeAsBytes([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46]);
+
+      final mockClient = MockClient((request) async {
+        expect(request.url.host, 'generativelanguage.googleapis.com');
+        return http.Response(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': 'Meeting notes: Complete sprint review.'}
+                  ]
+                }
+              }
+            ]
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final service = GeminiCloudOcrService(client: mockClient);
+      service.setDirectApiKey('test-gemini-key');
+
+      final result = await service.recognizeHandwriting(sampleFile);
+      expect(result.text, 'Meeting notes: Complete sprint review.');
+      expect(result.wordCount, 5);
+      expect(result.confidenceScore, 95);
+    });
   });
 }

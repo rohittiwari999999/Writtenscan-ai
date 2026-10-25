@@ -8,6 +8,7 @@ import '../../ocr/data/gemini_cloud_ocr_service.dart';
 import '../../history/domain/scanned_document.dart';
 import '../../history/data/document_repository.dart';
 import '../../document_editor/presentation/document_editor_screen.dart';
+import '../../settings/presentation/settings_screen.dart';
 
 class CameraScannerScreen extends ConsumerStatefulWidget {
   const CameraScannerScreen({super.key});
@@ -285,6 +286,11 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
   }
 
   void _showErrorDialog(String errorMsg) {
+    final isConnectionError = errorMsg.contains('10.0.2.2') ||
+        errorMsg.contains('Cannot connect') ||
+        errorMsg.contains('SocketException') ||
+        errorMsg.contains('SSL Certificate');
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -295,22 +301,64 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
             Text('Recognition Failed'),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(errorMsg),
-            const SizedBox(height: 12),
-            const Text(
-              'Tips:\n• Ensure good lighting and high contrast.\n• Check network connection or verify Backend URL in Settings tab.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(errorMsg, style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isConnectionError ? 'Quick Fix for Physical Phone:' : 'Tips:',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue.shade900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      isConnectionError
+                          ? '• 10.0.2.2 only works in the PC Emulator.\n• For a physical phone, connect phone & PC to same Wi-Fi and enter http://YOUR_PC_IP:3000 in Settings.\n• Or enter your free Gemini API Key in Settings to transcribe directly without needing a PC!'
+                          : '• Ensure good lighting and high contrast.\n• Check network connection or verify Backend URL in Settings tab.',
+                      style: TextStyle(fontSize: 11, color: Colors.blue.shade900),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
+            child: const Text('Dismiss'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade700,
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.settings, size: 16),
+            label: const Text('Open Settings'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              ).then((_) {
+                _ocrService.loadPersistedUrl();
+              });
+            },
           ),
         ],
       ),
