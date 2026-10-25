@@ -29,7 +29,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedUrl = prefs.getString('custom_ocr_backend_url') ?? _ocrService.baseUrl;
+    var savedUrl = prefs.getString('custom_ocr_backend_url') ?? _ocrService.baseUrl;
+    if (savedUrl.contains('writescan-ai.app')) {
+      savedUrl = 'http://10.0.2.2:3000';
+      await prefs.setString('custom_ocr_backend_url', savedUrl);
+    }
     final savedLang = prefs.getString('default_ocr_language') ?? 'auto';
 
     final repo = ref.read(documentRepositoryProvider);
@@ -216,6 +220,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 8),
+
+                  // Quick presets for convenience
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      ActionChip(
+                        avatar: const Icon(Icons.android, size: 14),
+                        label: const Text('Emulator (10.0.2.2)', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          _urlController.text = 'http://10.0.2.2:3000';
+                        },
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.wifi, size: 14),
+                        label: const Text('Local LAN (192.168.x.x)', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          _urlController.text = 'http://192.168.1.100:3000';
+                        },
+                      ),
+                    ],
+                  ),
+
                   const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
@@ -248,10 +276,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                     ),
                     if (_lastHealthInfo!.errorMessage != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        'Details: ${_lastHealthInfo!.errorMessage}',
-                        style: const TextStyle(fontSize: 11, color: Colors.red),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded, size: 16, color: Colors.red.shade700),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Connection Diagnostic:',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red.shade800),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _lastHealthInfo!.errorMessage!,
+                              style: TextStyle(fontSize: 11, color: Colors.red.shade900),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ],

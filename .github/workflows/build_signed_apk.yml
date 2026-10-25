@@ -108,7 +108,7 @@ jobs:
         env:
           OCR_BACKEND_URL: ${{ secrets.OCR_BACKEND_URL }}
         run: |
-          TARGET_URL="${OCR_BACKEND_URL:-https://writescan-ai.app}"
+          TARGET_URL="${OCR_BACKEND_URL:-http://10.0.2.2:3000}"
           echo "OCR_BACKEND_URL=$TARGET_URL" > .env
           echo "Configured Flutter app with OCR_BACKEND_URL: $TARGET_URL"
 

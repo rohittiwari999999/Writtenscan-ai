@@ -102,6 +102,17 @@ app.post('/api/ocr/recognize', async (req: Request, res: Response) => {
       }
     }
 
+    // Inspect magic bytes if mimeType is default or unspecified
+    if (detectedMime === 'image/jpeg' || !detectedMime) {
+      if (cleanBase64.startsWith('iVBORw0KGgo')) {
+        detectedMime = 'image/png';
+      } else if (cleanBase64.startsWith('UklGR')) {
+        detectedMime = 'image/webp';
+      } else if (cleanBase64.startsWith('/9j/')) {
+        detectedMime = 'image/jpeg';
+      }
+    }
+
     // Verify cleaned base64
     if (cleanBase64.length < 50) {
       res.status(400).json({
@@ -154,68 +165,84 @@ Return your transcription in JSON with:
 - lineCount: total number of distinct text lines
 - warnings: list of any observational notes (e.g. "Slight glare in top corner", "Cursive cursive font", "Marginal note included")`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              data: cleanBase64,
-              mimeType: detectedMime || 'image/jpeg',
+    // Generate content with 1 automatic retry on transient spikes (503/UNAVAILABLE)
+    let response: any;
+    let attempts = 0;
+    while (attempts < 2) {
+      try {
+        attempts++;
+        response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  data: cleanBase64,
+                  mimeType: detectedMime || 'image/jpeg',
+                },
+              },
+              {
+                text: promptText,
+              },
+            ],
+          },
+          config: {
+            systemInstruction,
+            temperature: 0.1, // Low temperature for high accuracy OCR transcription
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                text: {
+                  type: Type.STRING,
+                  description: 'The transcribed text preserving line breaks and original layout.',
+                },
+                detectedLanguage: {
+                  type: Type.STRING,
+                  description: 'The primary language identified in the handwriting.',
+                },
+                languageCode: {
+                  type: Type.STRING,
+                  description: 'ISO code e.g. en, hi, ta, te, bn, mr, etc.',
+                },
+                confidenceScore: {
+                  type: Type.INTEGER,
+                  description: 'Estimated transcription accuracy from 0 to 100.',
+                },
+                confidenceRating: {
+                  type: Type.STRING,
+                  description: 'HIGH, MEDIUM, or LOW.',
+                },
+                wordCount: {
+                  type: Type.INTEGER,
+                  description: 'Estimated word count of extracted text.',
+                },
+                lineCount: {
+                  type: Type.INTEGER,
+                  description: 'Number of transcribed lines.',
+                },
+                warnings: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Any document clarity or transcription remarks.',
+                },
+              },
+              required: ['text', 'detectedLanguage', 'confidenceScore', 'confidenceRating'],
             },
           },
-          {
-            text: promptText,
-          },
-        ],
-      },
-      config: {
-        systemInstruction,
-        temperature: 0.1, // Low temperature for high accuracy OCR transcription
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            text: {
-              type: Type.STRING,
-              description: 'The transcribed text preserving line breaks and original layout.',
-            },
-            detectedLanguage: {
-              type: Type.STRING,
-              description: 'The primary language identified in the handwriting.',
-            },
-            languageCode: {
-              type: Type.STRING,
-              description: 'ISO code e.g. en, hi, ta, te, bn, mr, etc.',
-            },
-            confidenceScore: {
-              type: Type.INTEGER,
-              description: 'Estimated transcription accuracy from 0 to 100.',
-            },
-            confidenceRating: {
-              type: Type.STRING,
-              description: 'HIGH, MEDIUM, or LOW.',
-            },
-            wordCount: {
-              type: Type.INTEGER,
-              description: 'Estimated word count of extracted text.',
-            },
-            lineCount: {
-              type: Type.INTEGER,
-              description: 'Number of transcribed lines.',
-            },
-            warnings: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: 'Any document clarity or transcription remarks.',
-            },
-          },
-          required: ['text', 'detectedLanguage', 'confidenceScore', 'confidenceRating'],
-        },
-      },
-    });
+        });
+        break; // Success
+      } catch (genError: any) {
+        const errorMsg = genError?.message || '';
+        if (attempts < 2 && (errorMsg.includes('503') || errorMsg.includes('UNAVAILABLE') || errorMsg.includes('high demand'))) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          continue;
+        }
+        throw genError;
+      }
+    }
 
-    const rawResponseText = response.text || '{}';
+    const rawResponseText = response?.text || '{}';
     let parsedData: any = {};
     try {
       parsedData = JSON.parse(rawResponseText);
@@ -251,10 +278,21 @@ Return your transcription in JSON with:
   } catch (error: any) {
     console.error('Error during OCR recognition:', error);
     const processingTimeMs = Date.now() - startTime;
+    let cleanMessage = error?.message || 'An error occurred while recognizing handwriting from the image.';
+    try {
+      // If error message is a serialized Google JSON error, extract the user-friendly inner message
+      const parsedError = JSON.parse(cleanMessage);
+      if (parsedError?.error?.message) {
+        cleanMessage = parsedError.error.message;
+      }
+    } catch {
+      // Not JSON, keep original string
+    }
+
     res.status(500).json({
       success: false,
       error: 'OCR_PROCESSING_FAILED',
-      message: error?.message || 'An error occurred while recognizing handwriting from the image.',
+      message: cleanMessage,
       processingTimeMs,
     });
   }

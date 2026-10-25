@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -147,6 +148,195 @@ void main() {
       expect(langs.length, 2);
       expect(langs.first.code, 'hi');
       expect(langs.first.nativeName, 'हिन्दी');
+    });
+
+    test('getHealthStatus captures SSL HandshakeException safely with clear diagnostic', () async {
+      final mockClient = MockClient((request) async {
+        throw const HandshakeException(
+          'Handshake error in client: CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate (handshake.cc:393)',
+        );
+      });
+
+      final service = GeminiCloudOcrService(
+        client: mockClient,
+        baseUrl: 'https://custom-ocr-domain.internal',
+      );
+
+      final health = await service.getHealthStatus();
+      expect(health.isHealthy, isFalse);
+      expect(health.isConfigured, isFalse);
+      expect(health.errorMessage, isNotNull);
+      expect(health.errorMessage, contains('SSL Handshake Error'));
+      expect(health.errorMessage, contains('fullchain.pem'));
+    });
+
+    test('getHealthStatus captures SocketException gracefully when backend is unreachable', () async {
+      final mockClient = MockClient((request) async {
+        throw const SocketException('Connection refused (OS Error: Connection refused, errno = 111)');
+      });
+
+      final service = GeminiCloudOcrService(
+        client: mockClient,
+        baseUrl: 'http://10.0.2.2:3000',
+      );
+
+      final health = await service.getHealthStatus();
+      expect(health.isHealthy, isFalse);
+      expect(health.isConfigured, isFalse);
+      expect(health.errorMessage, isNotNull);
+      expect(health.errorMessage, contains('Connection refused'));
+    });
+
+    test('recognizeHandwriting returns OcrResult on successful 200 response', () async {
+      final tempDir = await Directory.systemTemp.createTemp('ocr_test');
+      final tempFile = File('${tempDir.path}/sample.jpg');
+      await tempFile.writeAsBytes([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46]);
+
+      final mockClient = MockClient((request) async {
+        expect(request.url.path, '/api/ocr/recognize');
+        final decoded = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(decoded['mimeType'], 'image/jpeg');
+        expect(decoded['language'], 'hi');
+        expect(decoded['preserveLayout'], isTrue);
+
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'text': 'नमस्ते दुनिया\nयह हस्तलिखित पाठ है।',
+            'detectedLanguage': 'Hindi',
+            'languageCode': 'hi',
+            'confidenceScore': 94,
+            'confidenceRating': 'HIGH',
+            'wordCount': 6,
+            'lineCount': 2,
+            'warnings': [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final service = GeminiCloudOcrService(
+        client: mockClient,
+        baseUrl: 'http://localhost:3000',
+      );
+
+      final result = await service.recognizeHandwriting(tempFile, targetLanguage: 'hi');
+      expect(result.text, contains('नमस्ते दुनिया'));
+      expect(result.detectedLanguage, 'Hindi');
+      expect(result.confidenceScore, 94);
+
+      await tempDir.delete(recursive: true);
+    });
+
+    test('recognizeHandwriting throws FileSystemException when file does not exist', () async {
+      final nonExistentFile = File('/non_existent_path/fake_image.jpg');
+      final service = GeminiCloudOcrService(
+        client: MockClient((_) async => http.Response('', 200)),
+        baseUrl: 'http://localhost:3000',
+      );
+
+      expect(
+        () => service.recognizeHandwriting(nonExistentFile),
+        throwsA(isA<FileSystemException>()),
+      );
+    });
+
+    test('recognizeHandwriting throws FormatException when file is 0 bytes', () async {
+      final tempDir = await Directory.systemTemp.createTemp('ocr_empty_test');
+      final emptyFile = File('${tempDir.path}/empty.jpg');
+      await emptyFile.writeAsBytes([]);
+
+      final service = GeminiCloudOcrService(
+        client: MockClient((_) async => http.Response('', 200)),
+        baseUrl: 'http://localhost:3000',
+      );
+
+      expect(
+        () => service.recognizeHandwriting(emptyFile),
+        throwsA(isA<FormatException>()),
+      );
+
+      await tempDir.delete(recursive: true);
+    });
+
+    test('recognizeHandwriting throws HttpException on 503 (GEMINI_API_KEY missing)', () async {
+      final tempDir = await Directory.systemTemp.createTemp('ocr_503_test');
+      final sampleFile = File('${tempDir.path}/sample.jpg');
+      await sampleFile.writeAsBytes([0x01, 0x02, 0x03]);
+
+      final mockClient = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'error': 'Backend OCR service is not configured with GEMINI_API_KEY'}),
+          503,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final service = GeminiCloudOcrService(
+        client: mockClient,
+        baseUrl: 'http://localhost:3000',
+      );
+
+      expect(
+        () => service.recognizeHandwriting(sampleFile),
+        throwsA(predicate((e) => e is HttpException && e.message.contains('GEMINI_API_KEY'))),
+      );
+
+      await tempDir.delete(recursive: true);
+    });
+
+    test('recognizeHandwriting throws FormatException on 400 (Bad image payload)', () async {
+      final tempDir = await Directory.systemTemp.createTemp('ocr_400_test');
+      final sampleFile = File('${tempDir.path}/corrupt.jpg');
+      await sampleFile.writeAsBytes([0x01, 0x02, 0x03]);
+
+      final mockClient = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'error': 'Invalid image format'}),
+          400,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final service = GeminiCloudOcrService(
+        client: mockClient,
+        baseUrl: 'http://localhost:3000',
+      );
+
+      expect(
+        () => service.recognizeHandwriting(sampleFile),
+        throwsA(isA<FormatException>()),
+      );
+
+      await tempDir.delete(recursive: true);
+    });
+
+    test('recognizeHandwriting translates HandshakeException into diagnostic SSL message', () async {
+      final tempDir = await Directory.systemTemp.createTemp('ocr_ssl_test');
+      final sampleFile = File('${tempDir.path}/sample.jpg');
+      await sampleFile.writeAsBytes([0x01, 0x02, 0x03]);
+
+      final mockClient = MockClient((request) async {
+        throw const HandshakeException(
+          'Handshake error in client: CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate (handshake.cc:393)',
+        );
+      });
+
+      final service = GeminiCloudOcrService(
+        client: mockClient,
+        baseUrl: 'https://writescan-ai.app',
+      );
+
+      expect(
+        () => service.recognizeHandwriting(sampleFile),
+        throwsA(predicate((e) =>
+            e is HttpException &&
+            e.message.contains('SSL Certificate Verification Failed') &&
+            e.message.contains('fullchain.pem'))),
+      );
+
+      await tempDir.delete(recursive: true);
     });
   });
 }

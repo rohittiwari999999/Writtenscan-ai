@@ -54,19 +54,74 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
     super.dispose();
   }
 
+  bool _isPickingImage = false;
+
   Future<void> _handleImageSelection(ImageSource source) async {
+    if (_isPickingImage || _isLoading) return;
+
+    setState(() {
+      _isPickingImage = true;
+    });
+
     try {
       final XFile? photo = await _picker.pickImage(
         source: source,
         imageQuality: 92,
         maxWidth: 2400,
       );
-      if (photo == null) return;
 
       if (!mounted) return;
-      _showImagePreviewDialog(File(photo.path));
+
+      // Handle user cancellation gracefully without error popups
+      if (photo == null) {
+        setState(() {
+          _isPickingImage = false;
+        });
+        return;
+      }
+
+      final file = File(photo.path);
+      if (!await file.exists()) {
+        setState(() {
+          _isPickingImage = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Selected image file was not found on device storage.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final length = await file.length();
+      if (length == 0) {
+        setState(() {
+          _isPickingImage = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Selected image is empty (0 bytes). Please choose another photo.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      setState(() {
+        _isPickingImage = false;
+      });
+
+      _showImagePreviewDialog(file);
     } catch (e) {
       if (!mounted) return;
+      setState(() {
+        _isPickingImage = false;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Could not access image: ${e.toString()}'),
@@ -448,28 +503,56 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
 
                   // Action Buttons
                   ElevatedButton.icon(
-                    onPressed: () => _handleImageSelection(ImageSource.camera),
-                    icon: const Icon(Icons.camera_alt),
-                    label: const Text('Capture with Camera'),
+                    onPressed: _isLoading || _isPickingImage
+                        ? null
+                        : () => _handleImageSelection(ImageSource.camera),
+                    icon: const Icon(Icons.camera_alt, size: 22),
+                    label: const Text(
+                      'Capture with Camera',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       backgroundColor: const Color(0xFF2563EB),
                       foregroundColor: Colors.white,
-                      elevation: 0,
+                      elevation: 2,
+                      shadowColor: const Color(0xFF2563EB).withOpacity(0.35),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
 
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
 
-                  OutlinedButton.icon(
-                    onPressed: () => _handleImageSelection(ImageSource.gallery),
-                    icon: const Icon(Icons.photo_library),
-                    label: const Text('Import from Gallery'),
-                    style: OutlinedButton.styleFrom(
+                  // Import from Gallery Button - High contrast, pristine white surface with royal blue border & typography
+                  ElevatedButton.icon(
+                    onPressed: _isLoading || _isPickingImage
+                        ? null
+                        : () => _handleImageSelection(ImageSource.gallery),
+                    icon: _isPickingImage
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Color(0xFF2563EB),
+                            ),
+                          )
+                        : const Icon(Icons.photo_library_outlined, size: 22, color: Color(0xFF2563EB)),
+                    label: Text(
+                      _isPickingImage ? 'Opening Gallery...' : 'Import from Gallery',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2563EB),
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      foregroundColor: const Color(0xFF0F172A),
-                      side: BorderSide(color: Colors.grey.shade300),
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF2563EB),
+                      elevation: 1,
+                      shadowColor: Colors.black12,
+                      side: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
