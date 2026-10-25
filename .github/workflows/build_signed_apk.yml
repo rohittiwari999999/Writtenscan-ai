@@ -120,6 +120,10 @@ jobs:
         working-directory: flutter_app
         run: flutter analyze --no-fatal-infos || true
 
+      - name: Run Automated Flutter Unit & Widget Tests
+        working-directory: flutter_app
+        run: flutter test
+
       - name: Build Signed Universal Release APK
         working-directory: flutter_app
         run: |
