@@ -20,6 +20,9 @@ dependencies:
   image_picker: ^1.1.0
   image: ^4.2.0
 
+  # Inbuilt On-Device Standalone OCR (Zero API, Offline)
+  google_mlkit_text_recognition: ^0.15.1
+
   # Networking & Real OCR
   http: ^1.2.1
   flutter_dotenv: ^5.1.0

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import '../../ocr/data/gemini_cloud_ocr_service.dart';
+import '../../ocr/data/ocr_engine_manager.dart';
 import '../../history/domain/scanned_document.dart';
 import '../../history/data/document_repository.dart';
 import '../../document_editor/presentation/document_editor_screen.dart';
@@ -19,7 +19,7 @@ class CameraScannerScreen extends ConsumerStatefulWidget {
 
 class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
   final ImagePicker _picker = ImagePicker();
-  late GeminiCloudOcrService _ocrService;
+  late OcrEngineManager _ocrManager;
   bool _isLoading = false;
   String _loadingStep = '';
   String _selectedLanguage = 'auto';
@@ -45,13 +45,15 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
   @override
   void initState() {
     super.initState();
-    _ocrService = GeminiCloudOcrService();
-    _ocrService.loadPersistedUrl();
+    _ocrManager = OcrEngineManager();
+    _ocrManager.initialize().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
-    _ocrService.dispose();
+    _ocrManager.dispose();
     super.dispose();
   }
 
@@ -224,20 +226,24 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
   }
 
   Future<void> _runOcr(File imageFile) async {
+    final isOffline = _ocrManager.engineType == OcrEngineType.onDevice;
     setState(() {
       _isLoading = true;
-      _loadingStep = 'Connecting to Gemini Vision 3.8 Flash...';
+      _loadingStep = isOffline
+          ? 'Running Inbuilt On-Device OCR (100% Offline)...'
+          : 'Connecting to Cloud Gemini Vision...';
     });
 
     try {
       setState(() {
-        _loadingStep = 'Transcribing handwriting & preserving layout...';
+        _loadingStep = isOffline
+            ? 'Transcribing handwriting accurately on-device...'
+            : 'Transcribing handwriting & preserving layout...';
       });
 
-      // Reload any custom backend URL saved by user
-      await _ocrService.loadPersistedUrl();
+      await _ocrManager.initialize();
 
-      final result = await _ocrService.recognizeHandwriting(
+      final result = await _ocrManager.recognizeHandwriting(
         imageFile,
         targetLanguage: _selectedLanguage,
       );
@@ -356,7 +362,9 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
                 context,
                 MaterialPageRoute(builder: (_) => const SettingsScreen()),
               ).then((_) {
-                _ocrService.loadPersistedUrl();
+                _ocrManager.initialize().then((_) {
+                  if (mounted) setState(() {});
+                });
               });
             },
           ),
@@ -390,6 +398,8 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isOnDevice = _ocrManager.engineType == OcrEngineType.onDevice;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -397,28 +407,44 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
         ),
         actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.blue.shade200),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.bolt, size: 14, color: Colors.blue.shade700),
-                const SizedBox(width: 4),
-                Text(
-                  'Gemini 3.8 Flash',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade800,
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              ).then((_) {
+                _ocrManager.initialize().then((_) {
+                  if (mounted) setState(() {});
+                });
+              });
+            },
+            child: Container(
+              margin: const EdgeInsets.only(right: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: isOnDevice ? Colors.green.shade50 : Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: isOnDevice ? Colors.green.shade300 : Colors.blue.shade200),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isOnDevice ? Icons.offline_pin : Icons.bolt,
+                    size: 14,
+                    color: isOnDevice ? Colors.green.shade800 : Colors.blue.shade700,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  Text(
+                    isOnDevice ? 'Inbuilt Offline OCR' : 'Cloud Gemini',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isOnDevice ? Colors.green.shade900 : Colors.blue.shade800,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

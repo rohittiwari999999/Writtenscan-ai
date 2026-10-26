@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:writescan_ai/features/ocr/data/gemini_cloud_ocr_service.dart';
+import 'package:writescan_ai/features/ocr/data/mlkit_on_device_ocr_service.dart';
+import 'package:writescan_ai/features/ocr/data/ocr_engine_manager.dart';
 import 'package:writescan_ai/features/ocr/domain/ocr_service.dart';
 
 void main() {
@@ -390,6 +392,60 @@ void main() {
       expect(result.text, 'Meeting notes: Complete sprint review.');
       expect(result.wordCount, 5);
       expect(result.confidenceScore, 95);
+    });
+  });
+
+  group('OcrEngineManager Tests', () {
+    test('defaults to onDevice engine type', () {
+      final manager = OcrEngineManager();
+      expect(manager.engineType, OcrEngineType.onDevice);
+      expect(manager.engineType.shortName, 'Inbuilt Offline OCR');
+    });
+
+    test('switches engine type correctly', () async {
+      final manager = OcrEngineManager();
+      await manager.setEngineType(OcrEngineType.cloudGemini);
+      expect(manager.engineType, OcrEngineType.cloudGemini);
+      expect(manager.engineType.shortName, 'Cloud Gemini');
+    });
+
+    test('getSupportedLanguages returns full list of languages', () async {
+      final manager = OcrEngineManager();
+      final langs = await manager.getSupportedLanguages();
+      expect(langs.isNotEmpty, isTrue);
+      expect(langs.any((l) => l.code == 'hi'), isTrue);
+    });
+  });
+
+  group('MlKitOnDeviceOcrService Validation Tests', () {
+    test('recognizeHandwriting throws FileSystemException when file does not exist', () async {
+      final service = MlKitOnDeviceOcrService();
+      final nonExistent = File('/non_existent/fake.jpg');
+      await expectLater(
+        service.recognizeHandwriting(nonExistent),
+        throwsA(isA<FileSystemException>()),
+      );
+    });
+
+    test('recognizeHandwriting throws FormatException when file is 0 bytes', () async {
+      final tempDir = await Directory.systemTemp.createTemp('mlkit_empty_test');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final emptyFile = File('${tempDir.path}/empty.jpg');
+      await emptyFile.writeAsBytes([]);
+
+      final service = MlKitOnDeviceOcrService();
+      await expectLater(
+        service.recognizeHandwriting(emptyFile),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('getSupportedLanguages returns multi-script catalog', () async {
+      final service = MlKitOnDeviceOcrService();
+      final languages = await service.getSupportedLanguages();
+      expect(languages.length, greaterThanOrEqualTo(8));
+      expect(languages.any((l) => l.code == 'hi'), isTrue);
+      expect(languages.any((l) => l.code == 'en'), isTrue);
     });
   });
 }

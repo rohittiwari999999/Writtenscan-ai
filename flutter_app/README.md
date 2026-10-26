@@ -1,11 +1,12 @@
 # WriteScan AI — Mobile Flutter Android App
 
-WriteScan AI is a production-ready Android mobile application built with Flutter that converts handwritten notes, cursive script, whiteboard captures, and scanned documents into editable digital text using Google Gemini Vision 3.8 Flash OCR.
+WriteScan AI is a production-ready Android mobile application built with Flutter that converts handwritten notes, cursive script, whiteboard captures, and scanned documents into editable digital text. It features an **Inbuilt On-Device Standalone OCR Engine (Google ML Kit)** that works 100% offline with zero API keys and zero server dependencies, as well as an optional Cloud Gemini Vision OCR engine.
 
 ---
 
 ## 1. Features
-- **High-Accuracy Handwriting OCR**: Real document intelligence for cursive English and Indian languages (Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Kannada, Malayalam, Punjabi, Urdu).
+- **Inbuilt Standalone OCR (Zero API, Offline)**: Powered by Google ML Kit Neural Mobile Vision. Runs entirely on-device without any API key, internet, or PC server. Accurately transcribes handwriting in Latin (English, Spanish, French, German), Devanagari (Hindi, Marathi), Chinese, Japanese, and Korean.
+- **High-Accuracy Handwriting OCR**: Real document intelligence preserving paragraph blocks, line breaks, and indentation.
 - **Camera Document Scanner**: Real-time camera viewfinder with flash control, document grid guidelines, and auto-capture framing.
 - **Image Processing & Enhancement**: Crop, rotate (90° steps), deskew, brightness/contrast correction, binarization/document enhancement filter.
 - **Rich Document Editor**:

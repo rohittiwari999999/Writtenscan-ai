@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../ocr/data/ocr_engine_manager.dart';
 import '../../ocr/data/gemini_cloud_ocr_service.dart';
 import '../../history/data/document_repository.dart';
 
@@ -14,8 +15,9 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final TextEditingController _urlController = TextEditingController();
   final TextEditingController _apiKeyController = TextEditingController();
-  late GeminiCloudOcrService _ocrService;
+  late OcrEngineManager _ocrManager;
 
+  OcrEngineType _engineType = OcrEngineType.onDevice;
   bool _isTesting = false;
   bool _isTestingApiKey = false;
   bool _obscureApiKey = true;
@@ -26,13 +28,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _ocrService = GeminiCloudOcrService();
+    _ocrManager = OcrEngineManager();
     _loadSettings();
   }
 
   Future<void> _loadSettings() async {
+    await _ocrManager.initialize();
     final prefs = await SharedPreferences.getInstance();
-    var savedUrl = prefs.getString('custom_ocr_backend_url') ?? _ocrService.baseUrl;
+    var savedUrl = prefs.getString('custom_ocr_backend_url') ?? _ocrManager.cloudService.baseUrl;
     if (savedUrl.contains('writescan-ai.app')) {
       savedUrl = 'http://10.0.2.2:3000';
       await prefs.setString('custom_ocr_backend_url', savedUrl);
@@ -45,11 +48,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     if (mounted) {
       setState(() {
+        _engineType = _ocrManager.engineType;
         _urlController.text = savedUrl;
         _apiKeyController.text = savedApiKey;
-        _ocrService.updateBaseUrl(savedUrl);
+        _ocrManager.cloudService.updateBaseUrl(savedUrl);
         if (savedApiKey.isNotEmpty) {
-          _ocrService.setDirectApiKey(savedApiKey);
+          _ocrManager.cloudService.setDirectApiKey(savedApiKey);
         }
         _defaultLanguage = savedLang;
         _retentionPolicy = policy;
@@ -61,8 +65,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void dispose() {
     _urlController.dispose();
     _apiKeyController.dispose();
-    _ocrService.dispose();
+    _ocrManager.dispose();
     super.dispose();
+  }
+
+  Future<void> _switchEngineType(OcrEngineType type) async {
+    await _ocrManager.setEngineType(type);
+    setState(() {
+      _engineType = type;
+      _lastHealthInfo = null;
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            type == OcrEngineType.onDevice
+                ? '✅ Inbuilt Standalone OCR active (100% Offline, No API Key).'
+                : 'Switched to Cloud Gemini Vision OCR mode.',
+          ),
+          backgroundColor: type == OcrEngineType.onDevice ? Colors.green.shade700 : Colors.blue.shade700,
+        ),
+      );
+    }
   }
 
   Future<void> _testConnection() async {
@@ -72,12 +96,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final currentUrl = _urlController.text.trim();
     if (currentUrl.isNotEmpty) {
-      _ocrService.updateBaseUrl(currentUrl);
+      _ocrManager.cloudService.updateBaseUrl(currentUrl);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('custom_ocr_backend_url', currentUrl);
     }
 
-    final info = await _ocrService.getHealthStatus();
+    final info = await _ocrManager.cloudService.getHealthStatus();
 
     if (!mounted) return;
     setState(() {
@@ -101,9 +125,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_gemini_api_key', key);
-    _ocrService.setDirectApiKey(key);
+    _ocrManager.cloudService.setDirectApiKey(key);
 
-    final info = await _ocrService.getHealthStatus();
+    final info = await _ocrManager.cloudService.getHealthStatus();
 
     if (!mounted) return;
     setState(() {
@@ -114,7 +138,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (info.isHealthy) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('✅ Connected to Google Gemini Vision! Standalone mode active.'),
+          content: Text('✅ Connected to Google Gemini Vision!'),
           backgroundColor: Colors.green,
         ),
       );
@@ -132,7 +156,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user_gemini_api_key');
     _apiKeyController.clear();
-    _ocrService.setDirectApiKey(null);
+    _ocrManager.cloudService.setDirectApiKey(null);
     setState(() {
       _lastHealthInfo = null;
     });
@@ -203,17 +227,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
-          // Live Backend Status & Health Card
+          // Primary OCR Engine Selection Card
           Card(
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
               side: BorderSide(
-                color: _lastHealthInfo == null
-                    ? Colors.grey.shade200
-                    : (_lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
-                        ? Colors.green.shade300
-                        : Colors.orange.shade300),
+                color: _engineType == OcrEngineType.onDevice
+                    ? Colors.green.shade400
+                    : Colors.blue.shade300,
+                width: 1.5,
               ),
             ),
             child: Padding(
@@ -224,192 +247,149 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   Row(
                     children: [
                       Icon(
-                        _lastHealthInfo == null
-                            ? Icons.sensors
-                            : (_lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
-                                ? Icons.check_circle
-                                : Icons.warning_amber_rounded),
-                        color: _lastHealthInfo == null
-                            ? Colors.blue.shade700
-                            : (_lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
-                                ? Colors.green.shade600
-                                : Colors.orange.shade800),
+                        _engineType == OcrEngineType.onDevice
+                            ? Icons.offline_pin
+                            : Icons.cloud_done_outlined,
+                        color: _engineType == OcrEngineType.onDevice
+                            ? Colors.green.shade700
+                            : Colors.blue.shade700,
                       ),
                       const SizedBox(width: 8),
                       const Text(
-                        'OCR Backend Connectivity',
+                        'OCR Processing Engine',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
-                      const Spacer(),
-                      if (_lastHealthInfo != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: _lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
-                                ? Colors.green.shade50
-                                : Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            _lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
-                                ? 'Connected'
-                                : 'Disconnected',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: _lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
-                                  ? Colors.green.shade700
-                                  : Colors.red.shade700,
-                            ),
-                          ),
-                        ),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'OCR Proxy Server URL:',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 6),
-                    TextField(
-                    controller: _urlController,
-                    onChanged: (_) => setState(() {}),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      hintText: 'http://192.168.x.x:3000 or http://10.0.2.2:3000',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.refresh, size: 20),
-                        tooltip: 'Reset to default emulator URL',
-                        onPressed: () {
-                          _urlController.text = 'http://10.0.2.2:3000';
-                          setState(() {});
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
 
-                  if (_urlController.text.contains('10.0.2.2')) ...[
-                    Container(
-                      padding: const EdgeInsets.all(8),
+                  // Option 1: Inbuilt Standalone OCR (Selected by default)
+                  InkWell(
+                    onTap: () => _switchEngineType(OcrEngineType.onDevice),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.amber.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.amber.shade300),
+                        color: _engineType == OcrEngineType.onDevice
+                            ? Colors.green.shade50
+                            : Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _engineType == OcrEngineType.onDevice
+                              ? Colors.green.shade600
+                              : Colors.grey.shade300,
+                          width: _engineType == OcrEngineType.onDevice ? 1.5 : 1,
+                        ),
                       ),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.info_outline, size: 16, color: Colors.amber.shade900),
-                          const SizedBox(width: 6),
+                          Radio<OcrEngineType>(
+                            value: OcrEngineType.onDevice,
+                            groupValue: _engineType,
+                            activeColor: Colors.green.shade700,
+                            onChanged: (val) {
+                              if (val != null) _switchEngineType(val);
+                            },
+                          ),
                           Expanded(
-                            child: Text(
-                              'Physical Phone Notice: "10.0.2.2" only works inside PC emulators. If testing on a real phone, use "Local LAN" (same Wi-Fi) or "Direct Gemini API" below.',
-                              style: TextStyle(fontSize: 11, color: Colors.amber.shade900),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Text(
+                                      'Inbuilt On-Device OCR',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.shade100,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        'Recommended',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.green.shade900,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '• 100% Offline • Zero API Keys • Instant Processing\n'
+                                  '• Standalone: No PC server, Wi-Fi, or internet required\n'
+                                  '• Transcribes handwriting in English, Hindi, Devanagari, Latin & CJK scripts',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey.shade800),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                  ],
-
-                  // Quick presets for convenience
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      ActionChip(
-                        avatar: const Icon(Icons.wifi, size: 14),
-                        label: const Text('Local LAN (192.168.1.x)', style: TextStyle(fontSize: 11)),
-                        onPressed: () {
-                          _urlController.text = 'http://192.168.1.100:3000';
-                          setState(() {});
-                        },
-                      ),
-                      ActionChip(
-                        avatar: const Icon(Icons.wifi, size: 14),
-                        label: const Text('Local LAN (192.168.0.x)', style: TextStyle(fontSize: 11)),
-                        onPressed: () {
-                          _urlController.text = 'http://192.168.0.100:3000';
-                          setState(() {});
-                        },
-                      ),
-                      ActionChip(
-                        avatar: const Icon(Icons.android, size: 14),
-                        label: const Text('Emulator (10.0.2.2)', style: TextStyle(fontSize: 11)),
-                        onPressed: () {
-                          _urlController.text = 'http://10.0.2.2:3000';
-                          setState(() {});
-                        },
-                      ),
-                    ],
                   ),
 
                   const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _isTesting ? null : _testConnection,
-                      icon: _isTesting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.network_check, size: 18),
-                      label: Text(_isTesting ? 'Testing Ping...' : 'Test Backend Connection'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF2563EB),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                  if (_lastHealthInfo != null && !_ocrService.isDirectApiMode) ...[
-                    const Divider(height: 24),
-                    Text(
-                      'Verified Model: ${_lastHealthInfo!.model}',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Roundtrip Latency: ${_lastHealthInfo!.latencyMs} ms',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                    ),
-                    if (_lastHealthInfo!.errorMessage != null) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.red.shade200),
+
+                  // Option 2: Cloud Gemini Vision OCR
+                  InkWell(
+                    onTap: () => _switchEngineType(OcrEngineType.cloudGemini),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: _engineType == OcrEngineType.cloudGemini
+                            ? Colors.blue.shade50
+                            : Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _engineType == OcrEngineType.cloudGemini
+                              ? Colors.blue.shade600
+                              : Colors.grey.shade300,
+                          width: _engineType == OcrEngineType.cloudGemini ? 1.5 : 1,
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                      ),
+                      child: Row(
+                        children: [
+                          Radio<OcrEngineType>(
+                            value: OcrEngineType.cloudGemini,
+                            groupValue: _engineType,
+                            activeColor: Colors.blue.shade700,
+                            onChanged: (val) {
+                              if (val != null) _switchEngineType(val);
+                            },
+                          ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.warning_amber_rounded, size: 16, color: Colors.red.shade700),
-                                const SizedBox(width: 6),
+                                const Text(
+                                  'Cloud Gemini Vision OCR',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
                                 Text(
-                                  'Connection Diagnostic:',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red.shade800),
+                                  'Requires network connection to your Node.js proxy server or Google Gemini API Key.',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey.shade800),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _lastHealthInfo!.errorMessage!,
-                              style: TextStyle(fontSize: 11, color: Colors.red.shade900),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -417,122 +397,398 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           const SizedBox(height: 16),
 
-          // Direct Gemini API Mode (Standalone - Ideal for physical devices & 5G)
-          Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(
-                color: _ocrService.isDirectApiMode ? Colors.purple.shade300 : Colors.grey.shade200,
+          // Inbuilt Engine Detail Card (Displayed when onDevice is active)
+          if (_engineType == OcrEngineType.onDevice) ...[
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: Colors.green.shade200),
+              ),
+              color: Colors.green.shade50.withOpacity(0.5),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.check_circle_outline, color: Colors.green.shade800, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Inbuilt Offline Mode Active',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'WriteScan AI is running completely standalone. All handwriting and document scans are processed locally on your phone\'s neural hardware.',
+                      style: TextStyle(fontSize: 12, color: Colors.green.shade900),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        Chip(
+                          avatar: const Icon(Icons.wifi_off, size: 14, color: Colors.green),
+                          label: const Text('100% Offline', style: TextStyle(fontSize: 11)),
+                          backgroundColor: Colors.white,
+                        ),
+                        Chip(
+                          avatar: const Icon(Icons.vpn_key_off, size: 14, color: Colors.green),
+                          label: const Text('Zero API Key', style: TextStyle(fontSize: 11)),
+                          backgroundColor: Colors.white,
+                        ),
+                        Chip(
+                          avatar: const Icon(Icons.speed, size: 14, color: Colors.green),
+                          label: const Text('Instant On-Device', style: TextStyle(fontSize: 11)),
+                          backgroundColor: Colors.white,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.auto_awesome, color: Colors.purple.shade700),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          'Direct Gemini API (Standalone Mode)',
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+          ],
+
+          // Cloud Engine Cards (Displayed when cloudGemini is active)
+          if (_engineType == OcrEngineType.cloudGemini) ...[
+            // Live Backend Status & Health Card
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(
+                  color: _lastHealthInfo == null
+                      ? Colors.grey.shade200
+                      : (_lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
+                          ? Colors.green.shade300
+                          : Colors.orange.shade300),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _lastHealthInfo == null
+                              ? Icons.sensors
+                              : (_lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
+                                  ? Icons.check_circle
+                                  : Icons.warning_amber_rounded),
+                          color: _lastHealthInfo == null
+                              ? Colors.blue.shade700
+                              : (_lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
+                                  ? Colors.green.shade600
+                                  : Colors.orange.shade800),
                         ),
-                      ),
-                      if (_ocrService.isDirectApiMode)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.purple.shade50,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: Colors.purple.shade200),
-                          ),
-                          child: const Text(
-                            'Active',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.purple,
+                        const SizedBox(width: 8),
+                        const Text(
+                          'OCR Backend Connectivity',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const Spacer(),
+                        if (_lastHealthInfo != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: _lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
+                                  ? Colors.green.shade50
+                                  : Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              _lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
+                                  ? 'Connected'
+                                  : 'Disconnected',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: _lastHealthInfo!.isHealthy && _lastHealthInfo!.isConfigured
+                                    ? Colors.green.shade700
+                                    : Colors.red.shade700,
+                              ),
                             ),
                           ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'OCR Proxy Server URL:',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: _urlController,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText: 'http://192.168.x.x:3000 or http://10.0.2.2:3000',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.refresh, size: 20),
+                          tooltip: 'Reset to default emulator URL',
+                          onPressed: () {
+                            _urlController.text = 'http://10.0.2.2:3000';
+                            setState(() {});
+                          },
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Best for Physical Phones & Mobile Data (5G/4G). '
-                    'Enter your Gemini API key to run OCR directly from your phone without needing a PC server running.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _apiKeyController,
-                    obscureText: _obscureApiKey,
-                    decoration: InputDecoration(
-                      isDense: true,
-                      hintText: 'AIzaSy...',
-                      labelText: 'Your Gemini API Key (Stored Locally On-Device)',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscureApiKey ? Icons.visibility_off : Icons.visibility,
-                          size: 20,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscureApiKey = !_obscureApiKey;
-                          });
-                        },
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _isTestingApiKey ? null : _saveAndTestApiKey,
-                          icon: _isTestingApiKey
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                )
-                              : const Icon(Icons.check, size: 16),
-                          label: Text(_isTestingApiKey ? 'Verifying...' : 'Save & Activate Key'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.purple.shade700,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
+                    const SizedBox(height: 8),
+
+                    if (_urlController.text.contains('10.0.2.2')) ...[
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.amber.shade300),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.info_outline, size: 16, color: Colors.amber.shade900),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Physical Phone Notice: "10.0.2.2" only works inside PC emulators. If testing on a real phone, use "Local LAN" (same Wi-Fi) or "Direct Gemini API" below.',
+                                style: TextStyle(fontSize: 11, color: Colors.amber.shade900),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      if (_ocrService.isDirectApiMode) ...[
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: _clearApiKey,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red.shade700,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      const SizedBox(height: 8),
+                    ],
+
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        ActionChip(
+                          avatar: const Icon(Icons.wifi, size: 14),
+                          label: const Text('Local LAN (192.168.1.x)', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            _urlController.text = 'http://192.168.1.100:3000';
+                            setState(() {});
+                          },
+                        ),
+                        ActionChip(
+                          avatar: const Icon(Icons.wifi, size: 14),
+                          label: const Text('Local LAN (192.168.0.x)', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            _urlController.text = 'http://192.168.0.100:3000';
+                            setState(() {});
+                          },
+                        ),
+                        ActionChip(
+                          avatar: const Icon(Icons.android, size: 14),
+                          label: const Text('Emulator (10.0.2.2)', style: TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            _urlController.text = 'http://10.0.2.2:3000';
+                            setState(() {});
+                          },
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _isTesting ? null : _testConnection,
+                        icon: _isTesting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.network_check, size: 18),
+                        label: Text(_isTesting ? 'Testing Ping...' : 'Test Backend Connection'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2563EB),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                    if (_lastHealthInfo != null && !_ocrManager.cloudService.isDirectApiMode) ...[
+                      const Divider(height: 24),
+                      Text(
+                        'Verified Model: ${_lastHealthInfo!.model}',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Roundtrip Latency: ${_lastHealthInfo!.latencyMs} ms',
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                      ),
+                      if (_lastHealthInfo!.errorMessage != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.red.shade200),
                           ),
-                          child: const Text('Clear Key'),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.warning_amber_rounded, size: 16, color: Colors.red.shade700),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Connection Diagnostic:',
+                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red.shade800),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _lastHealthInfo!.errorMessage!,
+                                style: TextStyle(fontSize: 11, color: Colors.red.shade900),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ],
-                  ),
-                  if (_ocrService.isDirectApiMode && _lastHealthInfo != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Direct Engine: Google Gemini Vision 2.5 Flash (${_lastHealthInfo!.latencyMs}ms)',
-                      style: TextStyle(fontSize: 11, color: Colors.purple.shade900, fontWeight: FontWeight.w600),
-                    ),
                   ],
-                ],
+                ),
               ),
             ),
-          ),
+
+            const SizedBox(height: 16),
+
+            // Direct Gemini API Mode
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(
+                  color: _ocrManager.cloudService.isDirectApiMode ? Colors.purple.shade300 : Colors.grey.shade200,
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.auto_awesome, color: Colors.purple.shade700),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Direct Gemini API (Optional)',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        if (_ocrManager.cloudService.isDirectApiMode)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.purple.shade200),
+                            ),
+                            child: const Text(
+                              'Active',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.purple,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Enter your Gemini API key to run Cloud OCR directly from your phone.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _apiKeyController,
+                      obscureText: _obscureApiKey,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText: 'AIzaSy...',
+                        labelText: 'Your Gemini API Key (Stored Locally On-Device)',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscureApiKey ? Icons.visibility_off : Icons.visibility,
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscureApiKey = !_obscureApiKey;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _isTestingApiKey ? null : _saveAndTestApiKey,
+                            icon: _isTestingApiKey
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                  )
+                                : const Icon(Icons.check, size: 16),
+                            label: Text(_isTestingApiKey ? 'Verifying...' : 'Save & Activate Key'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.purple.shade700,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ),
+                        if (_ocrManager.cloudService.isDirectApiMode) ...[
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: _clearApiKey,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red.shade700,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            child: const Text('Clear Key'),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (_ocrManager.cloudService.isDirectApiMode && _lastHealthInfo != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Direct Engine: Google Gemini Vision 2.5 Flash (${_lastHealthInfo!.latencyMs}ms)',
+                        style: TextStyle(fontSize: 11, color: Colors.purple.shade900, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
 
           const SizedBox(height: 16),
 
