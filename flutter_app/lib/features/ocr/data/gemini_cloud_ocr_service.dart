@@ -562,7 +562,7 @@ j50uTsKOFguUvAglj6GeuSfkZU9qYBGV1ZB65d3v0UMHzP415N2d7v6n50uTsKOF
       stopwatch.stop();
       String msg = e.toString();
       if (_baseUrl.contains('10.0.2.2')) {
-        msg = 'Connection timed out to 10.0.2.2. If you are running on a physical phone, 10.0.2.2 is an emulator IP. Please enter your computer\'s Wi-Fi IP (e.g. http://192.168.1.xxx:3000) or tunnel URL.';
+        msg = 'Connection refused / unreachable at 10.0.2.2 ($e). If you are running on a physical phone, 10.0.2.2 is an emulator IP. Please enter your computer\'s Wi-Fi IP (e.g. http://192.168.1.xxx:3000) or tunnel URL.';
       }
       return ServiceHealthInfo(
         isHealthy: false,

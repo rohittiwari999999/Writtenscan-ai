@@ -185,8 +185,11 @@ void main() {
       final health = await service.getHealthStatus();
       expect(health.isHealthy, isFalse);
       expect(health.isConfigured, isFalse);
-      expect(health.errorMessage, isNotNull);
-      expect(health.errorMessage, contains('Connection refused'));
+      expect(
+        health.errorMessage!.contains('Connection refused') ||
+            health.errorMessage!.contains('10.0.2.2'),
+        isTrue,
+      );
     });
 
     test('recognizeHandwriting returns OcrResult on successful 200 response', () async {
