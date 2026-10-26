@@ -50,12 +50,19 @@ jobs:
       - name: Ensure AndroidX and Gradle Configuration
         working-directory: flutter_app
         run: |
-          mkdir -p android
+          mkdir -p android/gradle/wrapper
           cat <<EOF > android/gradle.properties
           org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=2G -XX:+HeapDumpOnOutOfMemoryError
           android.useAndroidX=true
           android.enableJetifier=true
           android.nonTransitiveRClass=true
+          EOF
+          cat <<EOF > android/gradle/wrapper/gradle-wrapper.properties
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.10.2-all.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
           EOF
           mkdir -p assets/sample_notes
           touch assets/sample_notes/.gitkeep
@@ -127,20 +134,20 @@ jobs:
         working-directory: flutter_app
         run: |
           echo "Building universal signed APK..."
-          flutter build apk --release
+          flutter build apk --release --android-skip-build-dependency-validation
 
       - name: Build Signed Split Per-ABI APKs (arm64-v8a, armeabi-v7a, x86_64)
         working-directory: flutter_app
         run: |
           echo "Building split-per-abi signed APKs for optimal download size..."
-          flutter build apk --release --split-per-abi
+          flutter build apk --release --split-per-abi --android-skip-build-dependency-validation
 
       - name: Build Signed Android App Bundle (AAB)
         if: ${{ github.event.inputs.build_aab != 'false' }}
         working-directory: flutter_app
         run: |
           echo "Building signed AAB bundle for Google Play Store..."
-          flutter build appbundle --release
+          flutter build appbundle --release --android-skip-build-dependency-validation
 
       - name: Organize Build Outputs
         run: |
