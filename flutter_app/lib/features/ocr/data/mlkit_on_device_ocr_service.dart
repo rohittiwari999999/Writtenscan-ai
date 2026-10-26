@@ -22,16 +22,27 @@ class MlKitOnDeviceOcrService implements OcrService {
     }
 
     final code = languageCode.toLowerCase().trim();
-    if (code == 'hi' || code == 'mr' || code == 'devanagari') {
-      return TextRecognitionScript.devanagari;
+    if (code == 'hi' || code == 'mr' || code == 'devanagari' || code == 'devanagiri') {
+      return _findScript(['devanagiri', 'devanagari']) ?? TextRecognitionScript.latin;
     } else if (code == 'zh' || code == 'chinese') {
-      return TextRecognitionScript.chinese;
+      return _findScript(['chinese']) ?? TextRecognitionScript.latin;
     } else if (code == 'ja' || code == 'japanese') {
-      return TextRecognitionScript.japanese;
+      return _findScript(['japanese']) ?? TextRecognitionScript.latin;
     } else if (code == 'ko' || code == 'korean') {
-      return TextRecognitionScript.korean;
+      return _findScript(['korean']) ?? TextRecognitionScript.latin;
     }
     return TextRecognitionScript.latin;
+  }
+
+  /// Helper to dynamically match enum by name to guarantee zero compilation errors
+  /// regardless of ML Kit enum member spelling differences (e.g. devanagiri vs devanagari).
+  TextRecognitionScript? _findScript(List<String> candidateNames) {
+    for (final script in TextRecognitionScript.values) {
+      if (candidateNames.contains(script.name.toLowerCase())) {
+        return script;
+      }
+    }
+    return null;
   }
 
   @override
@@ -67,11 +78,14 @@ class MlKitOnDeviceOcrService implements OcrService {
 
       if (text.isEmpty && script == TextRecognitionScript.latin && targetLanguage == 'auto') {
         try {
-          final devanagariRecognizer = _getRecognizer(TextRecognitionScript.devanagari);
-          final devanagariResult = await devanagariRecognizer.processImage(inputImage);
-          if (devanagariResult.text.trim().isNotEmpty) {
-            text = devanagariResult.text.trim();
-            blocks = devanagariResult.blocks;
+          final fallbackScript = _findScript(['devanagiri', 'devanagari']);
+          if (fallbackScript != null) {
+            final devanagariRecognizer = _getRecognizer(fallbackScript);
+            final devanagariResult = await devanagariRecognizer.processImage(inputImage);
+            if (devanagariResult.text.trim().isNotEmpty) {
+              text = devanagariResult.text.trim();
+              blocks = devanagariResult.blocks;
+            }
           }
         } catch (_) {}
       }
