@@ -21,7 +21,7 @@ dependencies:
   image: ^4.2.0
 
   # Inbuilt On-Device Standalone OCR (Zero API, Offline)
-  google_mlkit_text_recognition: ^0.15.1
+  google_mlkit_text_recognition: ^0.13.0
 
   # Networking & Real OCR
   http: ^1.2.1
