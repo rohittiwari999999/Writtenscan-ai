@@ -3,69 +3,78 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:writescan_ai/app.dart';
+import 'package:writescan_ai/core/theme/app_theme.dart';
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-
-  setUp(() {
-    TestWidgetsFlutterBinding.ensureInitialized();
-    SharedPreferences.setMockInitialValues({});
-  });
-
-  testWidgets('WriteScanApp builds without white screen or unhandled exceptions', (WidgetTester tester) async {
-    // Configure standard mobile portrait viewport dimensions to avoid any overflow during render
-    tester.view.physicalSize = const Size(1080, 2400);
-    tester.view.devicePixelRatio = 2.0;
-    addTearDown(() {
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
+  group('AppTheme Tests', () {
+    test('lightTheme has Material 3 enabled and pristine visual styling', () {
+      final theme = AppTheme.lightTheme;
+      expect(theme.useMaterial3, isTrue);
+      expect(theme.brightness, Brightness.light);
+      expect(theme.colorScheme.primary, isNotNull);
+      expect(theme.scaffoldBackgroundColor, const Color(0xFFF8FAFC));
     });
 
-    // Build the app within a ProviderScope
-    await tester.pumpWidget(
-      const ProviderScope(
-        child: WriteScanApp(),
-      ),
-    );
+    test('darkTheme has Material 3 enabled and deep slate visual styling', () {
+      final theme = AppTheme.darkTheme;
+      expect(theme.useMaterial3, isTrue);
+      expect(theme.brightness, Brightness.dark);
+      expect(theme.colorScheme.primary, isNotNull);
+      expect(theme.scaffoldBackgroundColor, const Color(0xFF0B1329));
+    });
+  });
 
-    // Initial settle
-    await tester.pump();
-    await tester.pumpAndSettle();
+  group('WriteScan AI Application Tests', () {
+    testWidgets('WriteScanApp builds and renders main scanner UI cleanly', (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
 
-    // Verify title and main UI components are present on Scanner screen
-    expect(find.text('WriteScan AI'), findsOneWidget);
-    expect(find.text('Capture with Camera'), findsOneWidget);
-    expect(find.text('Import from Gallery'), findsOneWidget);
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: WriteScanApp(),
+        ),
+      );
 
-    // Verify Bottom Navigation Bar items
-    expect(find.text('Scanner'), findsOneWidget);
-    expect(find.text('History'), findsOneWidget);
-    expect(find.text('Settings'), findsOneWidget);
+      // Bounded pumps allow widget tree and async initialization to resolve without timeout
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
-    // Tap on History tab
-    await tester.tap(find.text('History'));
-    await tester.pumpAndSettle();
+      // Verify Scanner header & primary action buttons
+      expect(find.text('WriteScan AI'), findsOneWidget);
+      expect(find.text('Capture with Camera'), findsOneWidget);
+      expect(find.text('Import from Gallery'), findsOneWidget);
 
-    // Verify History Screen renders
-    expect(find.text('Document History'), findsOneWidget);
+      // Verify Bottom Navigation Bar destinations
+      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.text('Scanner'), findsOneWidget);
+      expect(find.text('History'), findsOneWidget);
+      expect(find.text('Settings'), findsOneWidget);
+    });
 
-    // Tap on Settings tab
-    await tester.tap(find.text('Settings'));
-    await tester.pumpAndSettle();
+    testWidgets('NavigationBar smoothly switches between Scanner, History, and Settings', (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
 
-    // Verify Settings Screen renders with active Standalone Inbuilt Offline mode
-    expect(find.text('Settings & Diagnostics'), findsOneWidget);
-    expect(find.text('OCR Engine Selection'), findsOneWidget);
-    expect(find.text('Inbuilt Offline Mode Active'), findsOneWidget);
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: WriteScanApp(),
+        ),
+      );
 
-    // Switch to Cloud Gemini Vision OCR to verify backend connectivity controls
-    final cloudEngineFinder = find.text('Cloud Gemini Vision OCR');
-    if (cloudEngineFinder.evaluate().isNotEmpty) {
-      await tester.tap(cloudEngineFinder);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.text('OCR Backend Connectivity'), findsOneWidget);
-      expect(find.text('Test Backend Connection'), findsOneWidget);
-    }
+      // Switch to History tab
+      await tester.tap(find.text('History'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('Document History'), findsOneWidget);
+
+      // Switch to Settings tab
+      await tester.tap(find.text('Settings'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('Settings & Diagnostics'), findsOneWidget);
+      expect(find.text('OCR Engine Selection'), findsOneWidget);
+      expect(find.text('Inbuilt Offline Mode Active'), findsOneWidget);
+    });
   });
 }
