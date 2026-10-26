@@ -73,8 +73,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       expect(find.text('Settings & Diagnostics'), findsOneWidget);
-      expect(find.text('OCR Engine Selection'), findsOneWidget);
-      expect(find.text('Inbuilt Offline Mode Active'), findsOneWidget);
+      expect(find.text('OCR Processing Engine'), findsOneWidget);
+      expect(find.text('Inbuilt On-Device OCR'), findsOneWidget);
     });
   });
 }
