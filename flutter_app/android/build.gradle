@@ -14,11 +14,20 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-subprojects {
-    project.configurations.all {
+allprojects {
+    configurations.all {
         resolutionStrategy {
             force 'androidx.core:core:1.13.1'
             force 'androidx.core:core-ktx:1.13.1'
+            force 'androidx.activity:activity:1.9.3'
+            force 'androidx.activity:activity-ktx:1.9.3'
+            force 'androidx.fragment:fragment:1.8.5'
+            force 'androidx.fragment:fragment-ktx:1.8.5'
+            force 'androidx.lifecycle:lifecycle-runtime:2.8.7'
+            force 'androidx.lifecycle:lifecycle-viewmodel:2.8.7'
+            force 'androidx.lifecycle:lifecycle-common:2.8.7'
+            force 'androidx.annotation:annotation:1.9.1'
+            force 'androidx.annotation:annotation-experimental:1.4.1'
         }
     }
 }
