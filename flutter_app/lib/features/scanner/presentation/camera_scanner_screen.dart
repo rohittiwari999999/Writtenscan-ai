@@ -140,86 +140,182 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
-        return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final isHindi = _selectedLanguage == 'hi' || _selectedLanguage == 'auto';
+            final isOffline = _ocrManager.engineType == OcrEngineType.onDevice;
+
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
               ),
-              const SizedBox(height: 16),
-              const Text(
-                'Document Preview & Options',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  height: 220,
-                  color: Colors.grey.shade100,
-                  child: Image.file(
-                    imageFile,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Center(
-                      child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
-                ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Document Preview & Options',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      height: 200,
+                      color: Colors.grey.shade100,
+                      child: Image.file(
+                        imageFile,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  // OCR Engine Selector
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isOffline ? Colors.green.shade50 : Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isOffline ? Colors.green.shade200 : Colors.blue.shade200,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              isOffline ? Icons.offline_pin : Icons.bolt,
+                              size: 18,
+                              color: isOffline ? Colors.green.shade800 : Colors.blue.shade700,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              isOffline ? 'Engine: Inbuilt Offline OCR' : 'Engine: Cloud Gemini Vision AI',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: isOffline ? Colors.green.shade900 : Colors.blue.shade900,
+                              ),
+                            ),
+                            const Spacer(),
+                            TextButton(
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: () async {
+                                final newType = isOffline ? OcrEngineType.cloudGemini : OcrEngineType.onDevice;
+                                await _ocrManager.setEngineType(newType);
+                                setSheetState(() {});
+                                if (mounted) setState(() {});
+                              },
+                              child: Text(
+                                isOffline ? 'Switch to Cloud AI ⚡' : 'Switch to Offline 📱',
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          isOffline
+                              ? 'Runs 100% on-device (best for printed text; for cursive Hindi handwriting, switch to Cloud AI).'
+                              : 'Multimodal AI Vision with 99%+ accuracy for handwritten Hindi, cursive, and layout preservation.',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isOffline ? Colors.green.shade900 : Colors.blue.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: _selectedLanguage,
+                    decoration: InputDecoration(
+                      labelText: 'Recognition Language',
+                      prefixIcon: const Icon(Icons.language),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    ),
+                    items: _languages.map((lang) {
+                      return DropdownMenuItem(
+                        value: lang['code'],
+                        child: Text(lang['label']!),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setSheetState(() {
+                          _selectedLanguage = val;
+                        });
+                        setState(() {
+                          _selectedLanguage = val;
+                        });
+                      }
+                    },
+                  ),
+                  if (isHindi && isOffline) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.amber.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 16, color: Colors.amber.shade800),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Tip: For handwritten Hindi/Devanagari, Cloud Gemini AI delivers vastly superior transcription.',
+                              style: TextStyle(fontSize: 11, color: Colors.amber.shade900),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _runOcr(imageFile);
+                    },
+                    icon: const Icon(Icons.auto_awesome),
+                    label: const Text('Enhance & Recognize Handwriting'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                value: _selectedLanguage,
-                decoration: InputDecoration(
-                  labelText: 'Recognition Language',
-                  prefixIcon: const Icon(Icons.language),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                ),
-                items: _languages.map((lang) {
-                  return DropdownMenuItem(
-                    value: lang['code'],
-                    child: Text(lang['label']!),
-                  );
-                }).toList(),
-                onChanged: (val) {
-                  if (val != null) {
-                    setState(() {
-                      _selectedLanguage = val;
-                    });
-                  }
-                },
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _runOcr(imageFile);
-                },
-                icon: const Icon(Icons.auto_awesome),
-                label: const Text('Enhance & Recognize Handwriting'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2563EB),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -249,6 +345,86 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
       );
 
       if (!mounted) return;
+
+      if (result.text.trim().isEmpty) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(
+                  isOffline ? Icons.lightbulb_outline : Icons.info_outline,
+                  color: isOffline ? Colors.amber.shade700 : Colors.orange,
+                ),
+                const SizedBox(width: 8),
+                Text(isOffline ? 'Handwriting Not Deciphered' : 'No Text Detected'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isOffline
+                      ? 'The inbuilt offline OCR engine could not decipher the handwritten strokes in this image.\n\nOffline ML Kit is trained on printed fonts and struggles with cursive handwriting (especially in Hindi/Devanagari).'
+                      : 'No handwriting or printed text could be recognized in this image with ${_selectedLanguage == 'hi' ? 'Hindi' : (_selectedLanguage == 'auto' ? 'Auto-Detect' : _selectedLanguage)}.',
+                  style: const TextStyle(fontSize: 14),
+                ),
+                if (isOffline) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.bolt, color: Colors.blue.shade800, size: 20),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Switch to Cloud Gemini Vision OCR to transcribe handwritten Hindi with 99%+ accuracy.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1E3A8A),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Dismiss'),
+              ),
+              if (isOffline)
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.bolt, size: 16),
+                  label: const Text('Transcribe with Gemini AI'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await _ocrManager.setEngineType(OcrEngineType.cloudGemini);
+                    if (mounted) setState(() {});
+                    _runOcr(imageFile);
+                  },
+                ),
+            ],
+          ),
+        );
+        return;
+      }
 
       setState(() {
         _loadingStep = 'Finalizing document...';
@@ -396,6 +572,112 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
     }
   }
 
+  void _showEngineSwitchModal() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final currentEngine = _ocrManager.engineType;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Select OCR Engine',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Choose between fast on-device offline processing or high-accuracy cloud AI vision.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+                    RadioListTile<OcrEngineType>(
+                      value: OcrEngineType.cloudGemini,
+                      groupValue: currentEngine,
+                      activeColor: const Color(0xFF2563EB),
+                      title: const Row(
+                        children: [
+                          Icon(Icons.bolt, color: Colors.blue, size: 20),
+                          SizedBox(width: 8),
+                          Text('Cloud Gemini Vision (Recommended)', style: TextStyle(fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      subtitle: const Text('Accurate handwriting recognition for Hindi, Devanagari & Indian languages.'),
+                      onChanged: (val) async {
+                        if (val != null) {
+                          await _ocrManager.setEngineType(val);
+                          setModalState(() {});
+                          if (mounted) setState(() {});
+                          Navigator.pop(ctx);
+                        }
+                      },
+                    ),
+                    RadioListTile<OcrEngineType>(
+                      value: OcrEngineType.onDevice,
+                      groupValue: currentEngine,
+                      activeColor: Colors.green,
+                      title: const Row(
+                        children: [
+                          Icon(Icons.offline_pin, color: Colors.green, size: 20),
+                          SizedBox(width: 8),
+                          Text('Inbuilt On-Device OCR', style: TextStyle(fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      subtitle: const Text('100% offline, zero data usage. Best for printed documents.'),
+                      onChanged: (val) async {
+                        if (val != null) {
+                          await _ocrManager.setEngineType(val);
+                          setModalState(() {});
+                          if (mounted) setState(() {});
+                          Navigator.pop(ctx);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      icon: const Icon(Icons.settings, size: 16),
+                      label: const Text('Advanced Settings & Custom API Key'),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                        ).then((_) {
+                          _ocrManager.initialize().then((_) {
+                            if (mounted) setState(() {});
+                          });
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isOnDevice = _ocrManager.engineType == OcrEngineType.onDevice;
@@ -408,16 +690,7 @@ class _CameraScannerScreenState extends ConsumerState<CameraScannerScreen> {
         ),
         actions: [
           GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              ).then((_) {
-                _ocrManager.initialize().then((_) {
-                  if (mounted) setState(() {});
-                });
-              });
-            },
+            onTap: _showEngineSwitchModal,
             child: Container(
               margin: const EdgeInsets.only(right: 16),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),

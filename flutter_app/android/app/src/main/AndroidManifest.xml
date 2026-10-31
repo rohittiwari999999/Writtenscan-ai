@@ -47,6 +47,9 @@
         <!-- Google ML Kit on-device OCR model auto-provisioning -->
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="ocr" />
+            android:value="ocr,ocr_devanagari,ocr_chinese,ocr_japanese,ocr_korean" />
+        <meta-data
+            android:name="com.google.firebase.ml.vision.DEPENDENCIES"
+            android:value="ocr,ocr_devanagari" />
     </application>
 </manifest>

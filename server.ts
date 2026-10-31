@@ -261,16 +261,25 @@ Return your transcription in JSON with:
     }
 
     const processingTimeMs = Date.now() - startTime;
+    const extractedText = parsedData.text || '';
+    const hasDevanagariChars = /[\u0900-\u097F]/.test(extractedText);
+
+    let finalDetectedLang = parsedData.detectedLanguage || 'English';
+    let finalLangCode = parsedData.languageCode || 'en';
+    if (hasDevanagariChars && (finalDetectedLang.toLowerCase().includes('english') || finalDetectedLang === 'Auto-detected')) {
+      finalDetectedLang = 'Hindi';
+      finalLangCode = 'hi';
+    }
 
     res.json({
       success: true,
-      text: parsedData.text || '',
-      detectedLanguage: parsedData.detectedLanguage || 'English',
-      languageCode: parsedData.languageCode || 'en',
+      text: extractedText,
+      detectedLanguage: finalDetectedLang,
+      languageCode: finalLangCode,
       confidenceScore: typeof parsedData.confidenceScore === 'number' ? parsedData.confidenceScore : 90,
       confidenceRating: parsedData.confidenceRating || 'HIGH',
-      wordCount: parsedData.wordCount || (parsedData.text ? parsedData.text.split(/\s+/).filter(Boolean).length : 0),
-      lineCount: parsedData.lineCount || (parsedData.text ? parsedData.text.split('\n').length : 0),
+      wordCount: parsedData.wordCount || (extractedText ? extractedText.split(/\s+/).filter(Boolean).length : 0),
+      lineCount: parsedData.lineCount || (extractedText ? extractedText.split('\n').length : 0),
       warnings: Array.isArray(parsedData.warnings) ? parsedData.warnings : [],
       processingTimeMs,
       timestamp: new Date().toISOString(),

@@ -106,4 +106,12 @@ dependencies {
     implementation "androidx.core:core-ktx:1.13.1"
     implementation "androidx.window:window:1.2.0"
     implementation "androidx.window:window-java:1.2.0"
+
+    // Google ML Kit Standalone On-Device OCR Bundled Script Models
+    // Bundles models directly in APK so Hindi / Devanagari works 100% offline with zero crash
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+    implementation 'com.google.mlkit:text-recognition-devanagari:16.0.1'
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'
+    implementation 'com.google.mlkit:text-recognition-korean:16.0.1'
 }

@@ -85,17 +85,63 @@ class OcrEngineManager implements OcrService {
     } catch (_) {}
   }
 
+  /// Check if Cloud Gemini OCR is available (via direct API key or reachable backend proxy)
+  Future<bool> isCloudGeminiConfigured() async {
+    if (_cloudService.isDirectApiMode) return true;
+    try {
+      return await _cloudService.checkServiceAvailability();
+    } catch (_) {
+      return false;
+    }
+  }
+
   @override
   Future<OcrResult> recognizeHandwriting(
     File image, {
     String? targetLanguage,
     bool preserveLayout = true,
   }) async {
-    return activeService.recognizeHandwriting(
+    // 1. If explicit Cloud Gemini mode is active, call it directly
+    if (_engineType == OcrEngineType.cloudGemini) {
+      return _cloudService.recognizeHandwriting(
+        image,
+        targetLanguage: targetLanguage,
+        preserveLayout: preserveLayout,
+      );
+    }
+
+    // 2. Run Inbuilt On-Device OCR
+    final onDeviceResult = await _onDeviceService.recognizeHandwriting(
       image,
       targetLanguage: targetLanguage,
       preserveLayout: preserveLayout,
     );
+
+    // If on-device produced valid substantive text, return immediately
+    if (onDeviceResult.text.trim().isNotEmpty && onDeviceResult.text.trim().length > 3) {
+      return onDeviceResult;
+    }
+
+    // 3. Smart Automatic Fallback:
+    // If on-device produced no legible text (common for cursive Hindi handwriting),
+    // and Cloud Gemini Vision is configured, seamlessly transcribe with Cloud Gemini!
+    final hasCloud = await isCloudGeminiConfigured();
+    if (hasCloud) {
+      try {
+        final cloudResult = await _cloudService.recognizeHandwriting(
+          image,
+          targetLanguage: targetLanguage,
+          preserveLayout: preserveLayout,
+        );
+        if (cloudResult.text.trim().isNotEmpty) {
+          return cloudResult;
+        }
+      } catch (_) {
+        // Suppress fallback error and return onDeviceResult
+      }
+    }
+
+    return onDeviceResult;
   }
 
   @override

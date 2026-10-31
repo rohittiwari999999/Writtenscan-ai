@@ -10,9 +10,34 @@ class MlKitOnDeviceOcrService implements OcrService {
 
   MlKitOnDeviceOcrService();
 
-  /// Retrieve or lazily create a TextRecognizer for the specified script.
-  TextRecognizer _getRecognizer(TextRecognitionScript script) {
-    return _recognizers.putIfAbsent(script, () => TextRecognizer(script: script));
+  /// Retrieve or lazily create a TextRecognizer safely for the specified script.
+  TextRecognizer? _getRecognizer(TextRecognitionScript script) {
+    if (_recognizers.containsKey(script)) {
+      return _recognizers[script];
+    }
+    try {
+      final recognizer = TextRecognizer(script: script);
+      _recognizers[script] = recognizer;
+      return recognizer;
+    } catch (e) {
+      debugPrint('Warning: Could not initialize TextRecognizer for $script: $e');
+      return null;
+    }
+  }
+
+  /// Execute recognition safely with exception suppression to avoid any native crash.
+  Future<RecognizedText?> _processWithScript(
+    TextRecognitionScript script,
+    InputImage inputImage,
+  ) async {
+    try {
+      final recognizer = _getRecognizer(script);
+      if (recognizer == null) return null;
+      return await recognizer.processImage(inputImage);
+    } catch (e) {
+      debugPrint('ML Kit recognition failed for script $script: $e');
+      return null;
+    }
   }
 
   /// Maps language code to the appropriate Google ML Kit recognition script
@@ -45,6 +70,35 @@ class MlKitOnDeviceOcrService implements OcrService {
     return null;
   }
 
+  /// Check if text is genuine substantive content vs stray stroke/scan artifact noise
+  bool _isMeaningfulText(String? raw) {
+    if (raw == null) return false;
+    final text = raw.trim();
+    if (text.isEmpty) return false;
+    // Single character (e.g. "A", "I", "|", "/") is OCR stroke artifact noise
+    if (text.length <= 1) return false;
+
+    // Filter out punctuation and whitespace
+    final substantive = text.replaceAll(RegExp(r'[\s\p{P}\p{S}]', unicode: true), '');
+    if (substantive.length <= 1) return false;
+
+    // Discard 2-letter stray Latin noise unless it is a valid common English word
+    if (substantive.length == 2 && RegExp(r'^[A-Za-z]{2}$').hasMatch(substantive)) {
+      const validTwoLetterWords = {
+        'in', 'on', 'at', 'to', 'is', 'it', 'he', 'we', 'by', 'as', 'do', 'go', 'no', 'so', 'up', 'my', 'me', 'us', 'am', 'an', 'if', 'or'
+      };
+      if (!validTwoLetterWords.contains(substantive.toLowerCase())) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool _hasDevanagari(String text) {
+    return RegExp(r'[\u0900-\u097F]').hasMatch(text);
+  }
+
   @override
   Future<OcrResult> recognizeHandwriting(
     File image, {
@@ -62,98 +116,178 @@ class MlKitOnDeviceOcrService implements OcrService {
       throw const FormatException('Image file is empty (0 bytes).');
     }
 
-    final script = _scriptForLanguage(targetLanguage);
-    final recognizer = _getRecognizer(script);
-
     final inputImage = InputImage.fromFile(image);
+    final devanagariScript = _findScript(['devanagiri', 'devanagari']);
 
-    try {
-      final RecognizedText recognizedText = await recognizer.processImage(inputImage);
-      final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
+    final code = targetLanguage?.toLowerCase().trim() ?? 'auto';
+    final isExplicitDevanagari = code == 'hi' || code == 'mr' || code == 'devanagari' || code == 'devanagiri';
 
-      // If user selected Devanagari or auto, but text came back empty with Latin,
-      // attempt Devanagari recognition as a multi-script fallback
-      String text = recognizedText.text.trim();
-      List<TextBlock> blocks = recognizedText.blocks;
+    RecognizedText? recognized;
 
-      if (text.isEmpty && script == TextRecognitionScript.latin && targetLanguage == 'auto') {
+    if (isExplicitDevanagari) {
+      // 1. Explicit Hindi / Devanagari script selected:
+      if (devanagariScript != null) {
         try {
-          final fallbackScript = _findScript(['devanagiri', 'devanagari']);
-          if (fallbackScript != null) {
-            final devanagariRecognizer = _getRecognizer(fallbackScript);
-            final devanagariResult = await devanagariRecognizer.processImage(inputImage);
-            if (devanagariResult.text.trim().isNotEmpty) {
-              text = devanagariResult.text.trim();
-              blocks = devanagariResult.blocks;
-            }
-          }
-        } catch (_) {}
-      }
-
-      if (text.isEmpty) {
-        return OcrResult(
-          text: '',
-          detectedLanguage: 'Unknown',
-          languageCode: targetLanguage ?? 'en',
-          confidenceScore: 0,
-          confidenceRating: 'LOW',
-          wordCount: 0,
-          lineCount: 0,
-          processingTimeMs: elapsedMs,
-          warnings: const ['No legible handwritten or printed text detected in this image. Try improving lighting or focus.'],
-        );
-      }
-
-      // Reconstruct formatted layout preserving line and paragraph breaks
-      String formattedText;
-      if (preserveLayout && blocks.isNotEmpty) {
-        final buffer = StringBuffer();
-        for (int i = 0; i < blocks.length; i++) {
-          final block = blocks[i];
-          for (int j = 0; j < block.lines.length; j++) {
-            buffer.writeln(block.lines[j].text);
-          }
-          if (i < blocks.length - 1) {
-            buffer.writeln(); // Blank line between paragraph blocks
-          }
+          recognized = await _processWithScript(devanagariScript, inputImage);
+        } catch (e) {
+          debugPrint('Devanagari script processing note: $e');
         }
-        formattedText = buffer.toString().trim();
+      }
+      // If Devanagari produced nothing or only noise, do NOT fall back to stray Latin single-letter noise ("A")
+      if (recognized == null || !_isMeaningfulText(recognized.text)) {
+        try {
+          final fallback = await _processWithScript(TextRecognitionScript.latin, inputImage);
+          if (fallback != null && _isMeaningfulText(fallback.text)) {
+            recognized = fallback;
+          } else {
+            recognized = null;
+          }
+        } catch (_) {
+          recognized = null;
+        }
+      }
+    } else if (code == 'auto') {
+      // 2. Auto-Detect:
+      // Try Devanagari AND Latin to capture both Hindi handwriting and English/Latin notes
+      RecognizedText? devanagariResult;
+      if (devanagariScript != null) {
+        try {
+          devanagariResult = await _processWithScript(devanagariScript, inputImage);
+        } catch (e) {
+          debugPrint('Devanagari auto-detect note: $e');
+        }
+      }
+
+      RecognizedText? latinResult;
+      try {
+        latinResult = await _processWithScript(TextRecognitionScript.latin, inputImage);
+      } catch (e) {
+        debugPrint('Latin auto-detect note: $e');
+      }
+
+      final devText = devanagariResult?.text.trim() ?? '';
+      final latText = latinResult?.text.trim() ?? '';
+
+      final bool hasDev = _hasDevanagari(devText);
+      final bool devMeaningful = _isMeaningfulText(devText);
+      final bool latMeaningful = _isMeaningfulText(latText);
+
+      if (hasDev && devMeaningful) {
+        // Clear Hindi / Devanagari handwriting detected!
+        recognized = devanagariResult;
+      } else if (latMeaningful && !devMeaningful) {
+        recognized = latinResult;
+      } else if (devMeaningful && !latMeaningful) {
+        recognized = devanagariResult;
+      } else if (hasDev) {
+        recognized = devanagariResult;
+      } else if (latMeaningful && devMeaningful) {
+        // Both returned text: if Devanagari has Devanagari chars, prefer Devanagari
+        recognized = hasDev ? devanagariResult : (devText.length >= latText.length ? devanagariResult : latinResult);
       } else {
-        formattedText = text;
+        // Neither produced meaningful substantive text (e.g. latText is just stray "A" stroke artifact)
+        recognized = null;
       }
-
-      final words = formattedText.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
-      final lines = formattedText.split('\n').where((l) => l.trim().isNotEmpty).length;
-
-      // Identify primary script
-      String detectedLanguage = 'English';
-      String languageCode = 'en';
-      if (RegExp(r'[\u0900-\u097F]').hasMatch(formattedText)) {
-        detectedLanguage = 'Hindi (Devanagari)';
-        languageCode = 'hi';
-      } else if (RegExp(r'[\u4E00-\u9FFF]').hasMatch(formattedText)) {
-        detectedLanguage = 'Chinese';
-        languageCode = 'zh';
-      } else if (RegExp(r'[\u3040-\u30FF]').hasMatch(formattedText)) {
-        detectedLanguage = 'Japanese';
-        languageCode = 'ja';
+    } else {
+      // 3. Other specific languages (e.g. Chinese, Japanese, Korean, Latin)
+      final script = _scriptForLanguage(code);
+      try {
+        recognized = await _processWithScript(script, inputImage);
+      } catch (e) {
+        debugPrint('Specific script processing note: $e');
       }
-
-      return OcrResult(
-        text: formattedText,
-        detectedLanguage: detectedLanguage,
-        languageCode: languageCode,
-        confidenceScore: 92,
-        confidenceRating: 'HIGH',
-        wordCount: words,
-        lineCount: lines,
-        processingTimeMs: elapsedMs,
-        warnings: const [],
-      );
-    } catch (e) {
-      debugPrint('ML Kit on-device OCR error: $e');
-      throw Exception('On-Device OCR error: $e');
+      if (recognized == null || !_isMeaningfulText(recognized.text)) {
+        // Fallbacks
+        if (devanagariScript != null) {
+          try {
+            final devFallback = await _processWithScript(devanagariScript, inputImage);
+            if (devFallback != null && _isMeaningfulText(devFallback.text)) {
+              recognized = devFallback;
+            }
+          } catch (_) {}
+        }
+        if (recognized == null || !_isMeaningfulText(recognized.text)) {
+          try {
+            final latFallback = await _processWithScript(TextRecognitionScript.latin, inputImage);
+            if (latFallback != null && _isMeaningfulText(latFallback.text)) {
+              recognized = latFallback;
+            }
+          } catch (_) {}
+        }
+      }
     }
+
+    final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
+    final text = recognized?.text.trim() ?? '';
+    final blocks = recognized?.blocks ?? [];
+
+    if (text.isEmpty || !_isMeaningfulText(text)) {
+      return OcrResult(
+        text: '',
+        detectedLanguage: isExplicitDevanagari ? 'Hindi (Devanagari)' : (code == 'auto' ? 'Hindi / English' : code),
+        languageCode: code == 'auto' ? 'hi' : code,
+        confidenceScore: 0,
+        confidenceRating: 'LOW',
+        wordCount: 0,
+        lineCount: 0,
+        processingTimeMs: elapsedMs,
+        warnings: const [
+          'No legible text detected by inbuilt offline OCR. Handwritten Hindi notes require Cloud Gemini AI Vision for 99%+ accuracy.'
+        ],
+      );
+    }
+
+    // Reconstruct formatted layout preserving line and paragraph breaks
+    String formattedText;
+    if (preserveLayout && blocks.isNotEmpty) {
+      final buffer = StringBuffer();
+      for (int i = 0; i < blocks.length; i++) {
+        final block = blocks[i];
+        for (int j = 0; j < block.lines.length; j++) {
+          buffer.writeln(block.lines[j].text);
+        }
+        if (i < blocks.length - 1) {
+          buffer.writeln(); // Blank line between paragraph blocks
+        }
+      }
+      formattedText = buffer.toString().trim();
+    } else {
+      formattedText = text;
+    }
+
+    final words = formattedText.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+    final lines = formattedText.split('\n').where((l) => l.trim().isNotEmpty).length;
+
+    // Identify primary script accurately
+    String detectedLanguage = 'English';
+    String languageCode = 'en';
+    if (_hasDevanagari(formattedText)) {
+      detectedLanguage = 'Hindi (Devanagari)';
+      languageCode = 'hi';
+    } else if (RegExp(r'[\u4E00-\u9FFF]').hasMatch(formattedText)) {
+      detectedLanguage = 'Chinese';
+      languageCode = 'zh';
+    } else if (RegExp(r'[\u3040-\u30FF]').hasMatch(formattedText)) {
+      detectedLanguage = 'Japanese';
+      languageCode = 'ja';
+    } else if (RegExp(r'[\uAC00-\uD7AF]').hasMatch(formattedText)) {
+      detectedLanguage = 'Korean';
+      languageCode = 'ko';
+    }
+
+    final int calculatedConfidence = words > 3 ? 92 : (words > 1 ? 75 : 40);
+
+    return OcrResult(
+      text: formattedText,
+      detectedLanguage: detectedLanguage,
+      languageCode: languageCode,
+      confidenceScore: calculatedConfidence,
+      confidenceRating: calculatedConfidence >= 80 ? 'HIGH' : (calculatedConfidence >= 50 ? 'MEDIUM' : 'LOW'),
+      wordCount: words,
+      lineCount: lines,
+      processingTimeMs: elapsedMs,
+      warnings: const [],
+    );
   }
 
   @override
@@ -181,7 +315,9 @@ class MlKitOnDeviceOcrService implements OcrService {
   @override
   void dispose() {
     for (final recognizer in _recognizers.values) {
-      recognizer.close();
+      try {
+        recognizer.close();
+      } catch (_) {}
     }
     _recognizers.clear();
   }
